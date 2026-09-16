@@ -1,0 +1,65 @@
+# read-only enforcement ที่ upstream — ฝั่ง ai-collaboration-mcp
+# รันบน Worker ในเครื่อง (wrangler dev --local) + D1 ในเครื่อง ที่ seed จาก schema.sql
+# ไม่มีการเขียนลง workspace จริง ไม่มีโฮสต์จริงหรือ credential จริงในไฟล์นี้
+run-at: 2026-09-17
+
+== design ==
+path แยก: /mcp (เดิม) และ /mcp-readonly (ใหม่)
+credential แยก: MCP_READONLY_TOKENS เป็นรายการคนละใบกับ MCP_AUTH_TOKENS
+   ใบของเส้นอ่านเข้าเส้นปกติไม่ได้ และใบของเส้นปกติเข้าเส้นอ่านไม่ได้
+deny-by-default: Proxy ครอบ registerTool แล้วสั่ง disable() ทุก tool ที่ไม่อยู่ใน allowlist
+   ได้ทั้งสองชั้นพร้อมกัน เพราะ SDK กรอง tool ที่ disabled ออกจาก tools/list
+   และตอบ "Tool <name> disabled" เมื่อเรียกตรง ๆ ซึ่งเป็นการปฏิเสธที่ระบุชื่อ
+   ไม่ใช่ unknown tool
+การผูกนี้คือ token -> route/capability ไม่ใช่ token -> participant identity
+
+== 1. route / credential matrix ==
+read-only token -> /mcp-readonly     200
+read-only token -> /mcp              401
+normal token    -> /mcp              200
+normal token    -> /mcp-readonly     401
+ไม่มีโทเคน      -> /mcp-readonly     401
+ไม่มีโทเคน      -> /mcp              401
+โทเคนมั่ว       -> /mcp-readonly     401
+
+== 2. tools/list matrix (ชั้น discovery) ==
+read-only route  6 tools : get_decisions, get_plans, get_tasks, get_handoffs,
+                           get_discussion, get_workspace_context
+normal route    15 tools
+write tool โผล่ใน read-only list : ไม่มีเลย
+
+== 3. direct tools/call denial (ชั้น enforcement) ==
+เรียกด้วยชื่อจริงและ argument ที่ valid บนเส้น read-only ทั้งเก้าตัว
+post_message         DENIED: Tool post_message disabled
+create_task          DENIED: Tool create_task disabled
+record_decision      DENIED: Tool record_decision disabled
+create_handoff       DENIED: Tool create_handoff disabled
+create_discussion    DENIED: Tool create_discussion disabled
+update_task          DENIED: Tool update_task disabled
+accept_handoff       DENIED: Tool accept_handoff disabled
+record_plan          DENIED: Tool record_plan disabled
+resolve_decision     DENIED: Tool resolve_decision disabled
+# เป็น error ของ MCP server เอง ไม่ใช่ schema validation เพราะ argument ครบถ้วน
+read tools (control) get_workspace_context ALLOWED / get_tasks ALLOWED
+
+== 4. bypass / normalization (ใช้ read-only token พยายามเข้าเส้นปกติ) ==
+/mcp-readonly/../mcp          401
+/mcp-readonly/%2e%2e/mcp      401
+//mcp                         404
+/MCP                          404
+/mcp/                         401
+/mcp%20                       401
+/mcp-readonly-extra           401
+
+== 5. restart ==
+รีสตาร์ต Worker ในเครื่องแล้วเรียกซ้ำ
+tools บน read-only = 6 · post_message = disabled · get_tasks = ALLOWED · RO token -> /mcp = 401
+
+== 6. regression ของเส้นปกติ ==
+normal token -> create_discussion บน /mcp : ALLOWED (เขียนลง D1 ในเครื่องได้จริง)
+อ่านกลับผ่าน get_workspace_context        : discussions=1, you_are ตรงกับชื่อที่ผูกกับโทเคน
+npm run typecheck : ผ่าน
+
+== ข้อจำกัดที่ต้องระบุ ==
+ทดสอบบน Worker ในเครื่องเท่านั้น ยังไม่ได้ทดสอบกับ deployment ทดสอบหรือของจริง
+การเปลี่ยนแปลงอยู่บน branch ในเครื่องชื่อ poc/readonly-route ยังไม่ push และยังไม่เปิด PR
