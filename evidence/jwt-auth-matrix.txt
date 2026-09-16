@@ -1,0 +1,33 @@
+# Live matrix against the sandbox hub with mcp-auth in the auth_request path.
+# Tokens are signed by a local test key; the production deployment points
+# AUTH_JWT_JWKS_URL at the gateway's own JWKS instead. No live host involved.
+== JWT AUTH MATRIX ==
+run-at: 2026-09-17T00:13:00+07:00
+static IT token -> /mcp/it                     200
+static ADMIN token -> /mcp/it                  200
+static ACCOUNTING token -> /mcp/it             403
+JWT alice (role it) -> /mcp/it                 200
+JWT alice -> /mcp/admin                        403
+JWT alice -> /mcp/accounting                   403
+JWT bob (role admin) -> /mcp/admin             200
+JWT bob -> /mcp/it                             200
+JWT carol (no role mapped) -> /mcp/it          403
+JWT expired -> /mcp/it                         401
+JWT wrong audience -> /mcp/it                  401
+JWT wrong issuer -> /mcp/it                    401
+no token -> /mcp/it                            401
+garbage token -> /mcp/it                       401
+
+== identity in the hub's own access log ==
+172.24.0.1 jwt:alice@example.test POST /mcp HTTP/1.1 200 1250 rt=0.142
+172.24.0.1 static:token:it POST /mcp HTTP/1.1 200 188 rt=0.012
+172.24.0.1 static:token:admin POST /mcp HTTP/1.1 200 188 rt=0.011
+172.24.0.1 jwt:alice@example.test POST /mcp HTTP/1.1 200 188 rt=0.010
+172.24.0.1 jwt:bob@example.test POST /mcp HTTP/1.1 200 191 rt=0.014
+172.24.0.1 jwt:bob@example.test POST /mcp HTTP/1.1 200 188 rt=0.012
+
+# Denied requests log an empty actor because auth_request never returned one;
+# the subject of a rejected attempt is in the mcp-auth log instead.
+172.24.0.1 : POST /mcp HTTP/1.1 401 82 rt=0.002
+172.24.0.1 : POST /mcp HTTP/1.1 401 82 rt=0.001
+172.24.0.1 : POST /mcp HTTP/1.1 401 82 rt=0.002

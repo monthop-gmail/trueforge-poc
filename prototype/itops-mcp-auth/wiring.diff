@@ -1,0 +1,197 @@
+diff --git a/docker-compose.yml b/docker-compose.yml
+index c506feb..47e61dd 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -37,6 +37,29 @@ services:
+       PUBLIC_MCP_ORIGIN: ${PUBLIC_MCP_ORIGIN:-}
+       PUBLIC_MCP_HOSTNAME: ${PUBLIC_MCP_HOSTNAME:-}
+ 
++  mcp-auth:
++    build:
++      context: .
++      dockerfile: packages/Dockerfile
++      args:
++        SERVICE: mcp-auth
++    restart: unless-stopped
++    logging: *default-logging
++    networks: [infra-net]
++    environment:
++      PORT: "3000"
++      IT_TOKEN: ${IT_TOKEN}
++      ADMIN_TOKEN: ${ADMIN_TOKEN}
++      ACCOUNTING_TOKEN: ${ACCOUNTING_TOKEN}
++      # Leave the JWT block empty to keep Bearer-only behaviour.
++      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-}
++      AUTH_JWT_JWKS_URL: ${AUTH_JWT_JWKS_URL:-}
++      AUTH_JWT_AUDIENCES: ${AUTH_JWT_AUDIENCES:-}
++      AUTH_JWT_PRINCIPAL_ROLES: ${AUTH_JWT_PRINCIPAL_ROLES:-}
++      AUTH_JWT_DEFAULT_ROLE: ${AUTH_JWT_DEFAULT_ROLE:-}
++    expose:
++      - "3000"
++
+   nginx:
+     build:
+       context: ./nginx
+@@ -44,6 +67,8 @@ services:
+     logging: *default-logging
+     networks: [infra-net]
+     depends_on:
++      mcp-auth:
++        condition: service_healthy
+       mcp-hub-it:
+         condition: service_healthy
+       mcp-hub-admin:
+diff --git a/nginx/Dockerfile b/nginx/Dockerfile
+index 8657262..ab7453f 100644
+--- a/nginx/Dockerfile
++++ b/nginx/Dockerfile
+@@ -6,6 +6,7 @@ RUN apk add --no-cache gettext \
+ 
+ COPY nginx.conf.template /etc/nginx/nginx.conf.template
+ COPY mcp_proxy.conf /etc/nginx/mcp_proxy.conf
++COPY auth_request.conf /etc/nginx/auth_request.conf
+ COPY oauth_proxy.conf /etc/nginx/oauth_proxy.conf
+ COPY docker-entrypoint.sh /docker-entrypoint.sh
+ COPY html/ /usr/share/nginx/html/
+diff --git a/nginx/mcp_proxy.conf b/nginx/mcp_proxy.conf
+index db34d6e..3be6d13 100644
+--- a/nginx/mcp_proxy.conf
++++ b/nginx/mcp_proxy.conf
+@@ -14,7 +14,7 @@ proxy_set_header Host $host;
+ proxy_set_header X-Real-IP $remote_addr;
+ proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+ proxy_set_header X-Forwarded-Proto $scheme;
+-proxy_set_header X-MCP-Role $mcp_role;
++proxy_set_header X-MCP-Role $mcp_actor_role;
+ 
+ # Cloudflare Access + MCP client headers (do not drop Authorization; hubs ignore it)
+ proxy_set_header Authorization $http_authorization;
+@@ -33,3 +33,8 @@ add_header Cache-Control "no-cache, no-store, must-revalidate";
+ add_header X-Accel-Buffering no;
+ add_header Access-Control-Allow-Origin * always;
+ add_header Access-Control-Expose-Headers "WWW-Authenticate, mcp-session-id" always;
++
++# Identity resolved by mcp-auth for this request. Empty for paths that do not
++# run auth_request; never taken from the client.
++proxy_set_header X-Actor $mcp_actor;
++proxy_set_header X-Actor-Source $mcp_actor_source;
+diff --git a/nginx/nginx.conf.template b/nginx/nginx.conf.template
+index 03d0ded..9d74804 100644
+--- a/nginx/nginx.conf.template
++++ b/nginx/nginx.conf.template
+@@ -16,7 +16,7 @@ http {
+     map_hash_bucket_size 128;
+ 
+     # Log only URI path (without query) to avoid leaking secrets in access logs.
+-    log_format main '$remote_addr $mcp_role $request_method $uri $server_protocol $status $body_bytes_sent rt=$request_time';
++    log_format main '$remote_addr $mcp_actor_source:$mcp_actor $request_method $uri $server_protocol $status $body_bytes_sent rt=$request_time';
+     access_log /var/log/nginx/access.log main;
+     underscores_in_headers on;
+ 
+@@ -26,13 +26,6 @@ http {
+     }
+ 
+     # Exact match of `Authorization: Bearer <token>` to an MCP role.
+-    map $http_authorization $mcp_role {
+-        default                      "";
+-        "Bearer ${IT_TOKEN}"         "it";
+-        "Bearer ${ADMIN_TOKEN}"      "admin";
+-        "Bearer ${ACCOUNTING_TOKEN}" "accounting";
+-    }
+-
+     # Re-resolve Compose service names so recreate does not pin stale IPs.
+     resolver 127.0.0.11 valid=10s ipv6=off;
+ 
+@@ -41,6 +34,11 @@ http {
+         keepalive 8;
+     }
+ 
++    upstream mcp_auth {
++        server mcp-auth:3000;
++        keepalive 8;
++    }
++
+     server {
+         listen 80 default_server;
+         listen [::]:80 default_server;
+@@ -120,6 +118,9 @@ http {
+             }
+ 
+             auth_request /_auth_it;
++            auth_request_set $mcp_actor $upstream_http_x_actor;
++            auth_request_set $mcp_actor_source $upstream_http_x_actor_source;
++            auth_request_set $mcp_actor_role $upstream_http_x_actor_role;
+             error_page 401 = @error401_it;
+             error_page 403 = @error403;
+ 
+@@ -140,6 +141,9 @@ http {
+             }
+ 
+             auth_request /_auth_admin;
++            auth_request_set $mcp_actor $upstream_http_x_actor;
++            auth_request_set $mcp_actor_source $upstream_http_x_actor_source;
++            auth_request_set $mcp_actor_role $upstream_http_x_actor_role;
+             error_page 401 = @error401_admin;
+             error_page 403 = @error403;
+ 
+@@ -160,6 +164,9 @@ http {
+             }
+ 
+             auth_request /_auth_accounting;
++            auth_request_set $mcp_actor $upstream_http_x_actor;
++            auth_request_set $mcp_actor_source $upstream_http_x_actor_source;
++            auth_request_set $mcp_actor_role $upstream_http_x_actor_role;
+             error_page 401 = @error401_accounting;
+             error_page 403 = @error403;
+ 
+@@ -172,24 +179,20 @@ http {
+         # Internal RBAC helpers — keep `if` out of proxy locations except OPTIONS.
+         location = /_auth_it {
+             internal;
+-            if ($mcp_role = "") { return 401; }
+-            if ($mcp_role = "it") { return 200; }
+-            if ($mcp_role = "admin") { return 200; }
+-            return 403;
++            proxy_pass http://mcp_auth/verify/it;
++            include /etc/nginx/auth_request.conf;
+         }
+ 
+         location = /_auth_admin {
+             internal;
+-            if ($mcp_role = "") { return 401; }
+-            if ($mcp_role = "admin") { return 200; }
+-            return 403;
++            proxy_pass http://mcp_auth/verify/admin;
++            include /etc/nginx/auth_request.conf;
+         }
+ 
+         location = /_auth_accounting {
+             internal;
+-            if ($mcp_role = "") { return 401; }
+-            if ($mcp_role = "accounting") { return 200; }
+-            return 403;
++            proxy_pass http://mcp_auth/verify/accounting;
++            include /etc/nginx/auth_request.conf;
+         }
+ 
+         location @error401_it {
+diff --git a/package.json b/package.json
+index 84a9d45..edba673 100644
+--- a/package.json
++++ b/package.json
+@@ -14,11 +14,12 @@
+     "packages/mcp-pstack",
+     "packages/mcp-rag",
+     "packages/mcp-hub",
+-    "packages/mcp-oauth"
++    "packages/mcp-oauth",
++    "packages/mcp-auth"
+   ],
+   "scripts": {
+-    "build": "npm run build -w @itops/mcp-common && npm run build -w @itops/mcp-zabbix && npm run build -w @itops/mcp-meshcentral && npm run build -w @itops/mcp-express && npm run build -w @itops/mcp-allinone && npm run build -w @itops/mcp-zktime && npm run build -w @itops/mcp-odoo && npm run build -w @itops/mcp-pstack && npm run build -w @itops/mcp-rag && npm run build -w @itops/mcp-hub && npm run build -w @itops/mcp-oauth",
+-    "smoke": "npm run smoke -w @itops/mcp-express && npm run smoke -w @itops/mcp-allinone && npm run smoke -w @itops/mcp-zktime && npm run smoke -w @itops/mcp-odoo && npm run smoke -w @itops/mcp-pstack && npm run smoke -w @itops/mcp-rag && npm run smoke -w @itops/mcp-oauth",
++    "build": "npm run build -w @itops/mcp-common && npm run build -w @itops/mcp-zabbix && npm run build -w @itops/mcp-meshcentral && npm run build -w @itops/mcp-express && npm run build -w @itops/mcp-allinone && npm run build -w @itops/mcp-zktime && npm run build -w @itops/mcp-odoo && npm run build -w @itops/mcp-pstack && npm run build -w @itops/mcp-rag && npm run build -w @itops/mcp-hub && npm run build -w @itops/mcp-oauth && npm run build -w @itops/mcp-auth",
++    "smoke": "npm run smoke -w @itops/mcp-express && npm run smoke -w @itops/mcp-allinone && npm run smoke -w @itops/mcp-zktime && npm run smoke -w @itops/mcp-odoo && npm run smoke -w @itops/mcp-pstack && npm run smoke -w @itops/mcp-rag && npm run smoke -w @itops/mcp-oauth && npm run smoke -w @itops/mcp-auth",
+     "typecheck": "npm run build"
+   },
+   "engines": {

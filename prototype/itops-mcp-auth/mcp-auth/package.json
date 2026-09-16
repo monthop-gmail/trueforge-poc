@@ -1,0 +1,21 @@
+{
+  "name": "@itops/mcp-auth",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "smoke": "node dist/smoke.js"
+  },
+  "dependencies": {
+    "@itops/mcp-common": "*",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  }
+}
