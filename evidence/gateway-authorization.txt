@@ -1,0 +1,45 @@
+# dis-bc779b20 seq 10 ข้อ 1 — gateway authorization
+# ทดสอบบน tenant จริง ไม่มี secret ในไฟล์นี้ ชื่อ tenant/โฮสต์ถูกแทนด้วย placeholder
+run-at: 2026-09-17
+
+== principal ที่ใช้ ==
+owner PAT      : ผู้ใช้เดียวในระบบ role tenant-admin
+PAT ใบที่สอง   : ออกโดยผู้ใช้คนเดิม -> permission เหมือนกันทุกประการ ใช้เป็น negative test ไม่ได้
+virtual account: poc-noaccess สร้างใหม่ ไม่มี role binding ใด ๆ  <- ตัวที่ใช้จริง
+
+# หลักฐานว่า PAT ใบที่สองใช้ไม่ได้: permission list เท่ากับ owner ทุกบรรทัด
+# และยิง connector ทั้งสองได้ 200 เท่ากับ owner
+
+== 1. ไม่มีสิทธิ์เลย ==
+VA -> connector collab            403
+VA -> connector itops             403
+VA -> virtual MCP endpoint        403
+owner -> connector collab         200   (control)
+
+# body ที่ VA ได้รับ พิสูจน์ว่าปฏิเสธที่ชั้น gateway ไม่ใช่ upstream:
+# {"status":"failure","message":"User poc-noaccess is not authorized to access MCP server: <connector>"}
+# เทียบกับ 403 ของ upstream ซึ่งเป็นข้อความของ nginx ฝั่งฮับ:
+# {"error":"forbidden","message":"This token cannot access this MCP path"}
+# คนละข้อความ คนละชั้น แยกออกจากกันได้ชัด
+
+== 2. ให้สิทธิ์เฉพาะ connector เดียว ==
+role binding: subject=virtualaccount/poc-noaccess  role=mcp-server-user
+              resourceType=mcp-server  resourceFqn=<tenant>:mcp-server:<collab connector>
+
+VA -> collab (ได้สิทธิ์)          200   มีผลทันที ครั้งแรกที่ยิง ~0s
+VA -> itops  (ไม่ได้สิทธิ์)       403   สิทธิ์ผูกราย connector จริง ไม่ใช่เปิดทั้ง tenant
+
+== 3. ถอนสิทธิ์แล้วเรียกซ้ำ ==
+ลบ role binding                   HTTP 200
+VA -> collab หลังถอน              403   ครั้งแรกที่ยิง ใช้เวลา ~1s
+role bindings คงเหลือ             0
+
+== สรุป ==
+gateway authorization = PASS
+ปฏิเสธที่ชั้น gateway จริง ระบุชื่อ principal และชื่อ connector ในข้อความ
+ผูกสิทธิ์ราย connector ได้ และ propagation ทั้งขาให้และขาถอนน้อยกว่า 1-2 วินาที
+
+== ของที่เก็บกวาดแล้ว ==
+ลบ virtual MCP server ที่ใช้ทดสอบ และลบ role binding แล้ว
+คงเหลือ connector สองตัวตามเดิม และ virtual account poc-noaccess ที่ไม่มีสิทธิ์ใด ๆ
+(เก็บไว้ใช้ทดสอบรอบถัดไป ถ้าไม่ต้องการให้ลบได้)

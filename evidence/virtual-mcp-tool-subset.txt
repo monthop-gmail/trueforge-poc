@@ -1,0 +1,37 @@
+# dis-bc779b20 seq 10 ข้อ 3 — ข้อค้นพบที่กระทบแผน pilot อ่านอย่างเดียว
+run-at: 2026-09-17
+
+โจทย์: pilot ต้องเปิดเฉพาะ tool อ่าน และ tool เขียนที่ไม่อนุญาตต้องถูกปฏิเสธจริง
+ไม่ใช่แค่ซ่อนจาก tools/list
+
+== สิ่งที่ทดสอบ ==
+สร้าง virtual MCP server ที่ระบุ subset ของ tool ไว้ในแต่ละ server แล้วดูว่า
+endpoint เปิดอะไรให้บ้าง
+
+manifest ที่ส่งไปและถูกเก็บจริง:
+  servers: [{name: <collab>, tools: [get_workspace_context, get_tasks]},
+            {name: <itops>,  tools: [rag_get_status]}]
+
+== ผล ==
+tools/list ที่ endpoint            39 tools  (= 15 + 24 ครบทั้งสอง server)
+เรียก tool ที่อยู่นอก subset       สำเร็จ ไม่ถูกปฏิเสธ (ทดสอบด้วย tool อ่านเท่านั้น)
+
+ลองรูปแบบฟิลด์อีกสามแบบกับ server ตัวเดียว ทุกแบบได้ 15 tools เท่ากันหมด
+คือเห็นครบทั้ง server ไม่ได้ถูกกรอง:
+  tools: [ชื่อไม่ suffix]      -> 15
+  tools: [ชื่อมี suffix]       -> 15
+  toolSelectors: [{name: ...}] -> 15
+  enabledTools: [...]          -> 15
+
+== สรุป ==
+การประกอบ "ราย server" ใช้ได้จริง — virtual server ที่ใส่เฉพาะ collab เปิดแค่ 15 tools
+ของ collab ไม่มีของ itops ปนมา
+แต่การกรอง "ราย tool" ไม่มีผลกับทั้งสี่รูปแบบที่ลอง ฟิลด์ถูกเก็บใน manifest แต่ไม่ถูกบังคับใช้
+
+ผลต่อแผน: ถ้ากรอง tool ไม่ได้ pilot อ่านอย่างเดียวจะพึ่ง virtual server อย่างเดียวไม่ได้
+ต้องคุมที่ upstream แทน เช่นใช้ credential/role ที่เขียนไม่ได้เป็นตัวตั้ง
+ข้อควรทราบ: ฝั่ง collab ทุก tool เขียนอยู่ใน tool set เดียวกัน และฝั่ง IT role ก็ยังมี
+tool ที่เขียนได้อยู่บ้าง (reindex / ocr / pstack_call_tool) จึงไม่ใช่ read-only โดยธรรมชาติ
+
+ยังไม่สรุปว่า TrueFoundry ทำไม่ได้ — อาจเป็นชื่อฟิลด์อื่นหรือเป็นฟีเจอร์ของแผนที่สูงกว่า
+ควรยืนยันกับเอกสาร/ซัพพอร์ตก่อนวางแผน pilot บนสมมติฐานนี้
