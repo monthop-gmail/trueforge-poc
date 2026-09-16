@@ -1,167 +1,158 @@
-# Dual MCP PoC — results
+# Dual MCP PoC — ผลการทดสอบ
 
-Round 1 run 16 Sep 2026 (direct paths). Round 2 the same evening, after the owner opened a
-free TrueFoundry Developer tenant, closed the gateway path. Raw output: `evidence/`.
-Every number below came from a script in `scripts/`; nothing is inferred from source.
+รอบ 1 รันวันที่ 16 ก.ย. 2026 (เส้นทางตรง) · รอบ 2 เย็นวันเดียวกันหลังเจ้าของงานเปิด tenant
+TrueFoundry แผน Developer แบบฟรี ทำให้ปิดเส้นทาง gateway ได้ · output ดิบอยู่ใน `evidence/`
+ทุกตัวเลขข้างล่างมาจากสคริปต์ใน `scripts/` ไม่มีข้อไหนอนุมานจาก source
 
-## Status by path
+## สถานะแยกตามเส้นทาง
 
-| Path | Status | Basis |
+| เส้นทาง | สถานะ | อ้างอิงจาก |
 | --- | --- | --- |
-| **Direct Bearer** (with and without the TrueForge harness) | **PASS** | `smoke-bearer.sh` 14/0, `probe-trueforge.sh` 11/0 |
-| **Direct OAuth** — IT Ops hub | **PASS** | `probe-oauth.sh` 13/0 + a full code flow driven by TrueForge itself |
-| **Direct OAuth** — Collaboration | **NOT RUN** | discovery PASS; DCR would register a client on the shared production Worker |
-| **Gateway Bearer** (header credential on the connector) | **PASS** | `probe-gateway.sh` 12/0 — both servers, live tenant |
-| **Gateway OAuth** | **BLOCKED** | the gateway does not send PKCE and its redirect host is not on the hub's trusted list — see finding 6 |
-| **Gateway authorization** (a principal who should be refused) | **NOT RUN** | needs a second TrueFoundry principal without access to the connector — see finding 8 |
+| **Bearer ทางตรง** (ทั้งมีและไม่มี TrueForge harness) | **PASS** | `smoke-bearer.sh` 14/0, `probe-trueforge.sh` 11/0 |
+| **OAuth ทางตรง** — ฮับ IT Ops | **PASS** | `probe-oauth.sh` 13/0 + code flow เต็มรูปแบบที่ TrueForge เป็นคนขับเอง |
+| **OAuth ทางตรง** — Collaboration | **NOT RUN** | discovery ผ่าน แต่ DCR จะไปลงทะเบียน client บน Worker production ที่ใช้ร่วมกัน |
+| **Bearer ผ่าน gateway** (credential แบบ header ที่ connector) | **PASS** | `probe-gateway.sh` 12/0 — ทั้งสอง server บน tenant จริง |
+| **OAuth ผ่าน gateway** | **BLOCKED** | gateway ไม่ส่ง PKCE และโฮสต์ redirect ของมันไม่อยู่ใน allowlist ของฮับ — ดูข้อค้นพบ 6 |
+| **Authorization ของ gateway** (ผู้ที่ควรถูกปฏิเสธ) | **NOT RUN** | ต้องมี principal ที่สองบน TrueFoundry ที่ไม่มีสิทธิ์บน connector — ดูข้อค้นพบ 8 |
 
 ## Acceptance criteria
 
-| AC | Verdict | Evidence |
+| AC | ผล | หลักฐาน |
 | --- | --- | --- |
-| AC1 topology + versions + repeatable start | **PASS** | `dual-mcp-overview.md` §2, `dual-mcp-runbook.md`; one gap: the deployed Collaboration Worker is not pinnable to a commit |
-| AC2 initialize + tools/list + one read call, both servers | **PASS (direct and gateway)** / **PARTIAL (harness)** | direct and through the gateway: 15 collab tools + 24 IT tools, real read calls on both. Through TrueForge: same counts discovered, but tool *execution* is **NOT RUN** — the harness has no call API outside an agent turn, which needs a model provider |
-| AC3 missing/wrong token rejected; IT token rejected at admin and accounting | **PASS (direct)** / **PARTIAL (gateway)** | direct: 401 on missing and wrong token at both servers, 403 for the IT token at `/mcp/admin` and `/mcp/accounting`. Gateway: 401 on missing and wrong PAT for both connectors, and a connector pointing the IT token at the admin path was refused `403 "This token cannot access this MCP path"`. That 403 is **upstream RBAC surfacing through the gateway, not gateway policy** — gateway policy itself is the NOT RUN row above |
-| AC4 IT tool list exposes no privileged shell | **PASS (direct and gateway)** | 24 tools, none matching `run_shell`/`exec`/`command`; no shell tool was called |
-| AC5 collaboration identity is the team identity | **PASS, with a caveat that matters** | `you_are=monthop-gmail/trueforge` on both the direct and the gateway path, and the handoff was accepted under that same name. It is a **service/team identity, not a human or model identity** — and see finding 1 |
-| AC6 OAuth exercised on both servers, refresh and restart recorded | **PASS (IT Ops, direct)** / **NOT RUN (collab)** / **BLOCKED (gateway)** | direct: DCR → PKCE S256 → consent → code → token → tools/list → refresh, all green; replayed code with a wrong verifier rejected; restart behaviour in finding 3. Gateway OAuth: finding 6 |
-| AC7 evidence separable per layer, no credentials in logs | **PASS** | hub, harness and gateway evidence in separate files; scripts print no token values and compare secrets by SHA-256 prefix |
-| AC8 demo: IT read → finding → recorded in collaboration | **PARTIAL** | the IT read and the write-back both happened (this report). The write landed on the **shared** workspace, because no test deployment of the collaboration MCP exists |
-| AC9 teardown does not disturb anything real | **PASS** | sandbox is its own compose project on shifted ports with its own generated tokens; the one connector created for the cross-role test was deleted afterwards, leaving the tenant with exactly the two intended connectors |
+| AC1 topology + version + ขั้นตอนเริ่มระบบที่ทำซ้ำได้ | **PASS** | `dual-mcp-overview.md` §2, `dual-mcp-runbook.md` · เหลือช่องโหว่เดียว: Worker ของ collaboration ปักหมุดเป็น commit จากภายนอกไม่ได้ |
+| AC2 initialize + tools/list + เรียก read อย่างน้อยหนึ่งตัว ทั้งสอง server | **PASS (ทางตรงและผ่าน gateway)** / **PARTIAL (ผ่าน harness)** | ทางตรงและผ่าน gateway: collab 15 tools + IT 24 tools เรียก read จริงได้ทั้งคู่ · ผ่าน TrueForge: discover ได้จำนวนเท่ากัน แต่ "เรียก" tool เป็น **NOT RUN** เพราะ harness ไม่มี API เรียก tool นอก agent turn ซึ่งต้องมี model provider |
+| AC3 ไม่มี/ผิดโทเคนถูกปฏิเสธ · โทเคน IT ถูกปฏิเสธที่ admin และ accounting | **PASS (ทางตรง)** / **PARTIAL (gateway)** | ทางตรง: 401 ทั้งกรณีไม่มีและผิดโทเคนที่ทั้งสอง server, 403 สำหรับโทเคน IT ที่ `/mcp/admin` และ `/mcp/accounting` · gateway: 401 เมื่อไม่มีหรือใช้ PAT ผิดทั้งสอง connector และ connector ที่ชี้โทเคน IT ไปที่ path admin ถูกปฏิเสธ `403 "This token cannot access this MCP path"` — แต่ 403 ก้อนนั้นคือ **RBAC ของ upstream ที่โผล่ผ่าน gateway ออกมา ไม่ใช่ gateway policy** ตัว gateway policy เองคือแถว NOT RUN ข้างบน |
+| AC4 tools/list ของ IT ไม่มี privileged shell | **PASS (ทางตรงและผ่าน gateway)** | 24 tools ไม่มีตัวไหนเข้าข่าย `run_shell`/`exec`/`command` และไม่ได้เรียก shell จริง |
+| AC5 identity บน collaboration ตรงกับตัวตนของทีม | **PASS แต่มีข้อสังเกตที่สำคัญ** | `you_are=monthop-gmail/trueforge` ทั้งเส้นทางตรงและผ่าน gateway และ handoff ถูกรับด้วยชื่อเดียวกัน · เป็น **service/team identity ไม่ใช่ human หรือ model identity** — ดูข้อค้นพบ 1 |
+| AC6 ทดสอบ OAuth ทั้งสอง server พร้อมบันทึก refresh และ restart | **PASS (IT Ops ทางตรง)** / **NOT RUN (collab)** / **BLOCKED (gateway)** | ทางตรง: DCR → PKCE S256 → consent → code → token → tools/list → refresh ผ่านหมด · code ที่ถูกเล่นซ้ำด้วย verifier ผิดถูกปฏิเสธ · พฤติกรรมตอน restart อยู่ในข้อค้นพบ 3 · OAuth ผ่าน gateway ดูข้อค้นพบ 6 |
+| AC7 แยกหลักฐานรายชั้นได้ ไม่มี credential ใน log | **PASS** | หลักฐานของฮับ, harness และ gateway อยู่คนละไฟล์ · สคริปต์ไม่พิมพ์โทเคนและเทียบความลับด้วย SHA-256 prefix |
+| AC8 demo: อ่าน IT → สรุป → บันทึกลง collaboration | **PARTIAL** | อ่าน IT จริงและเขียนกลับจริง (คือรายงานฉบับนี้) แต่เขียนลง workspace **ที่ใช้ร่วมกัน** เพราะไม่มี deployment ทดสอบของ collaboration |
+| AC9 การเก็บกวาดไม่กระทบของจริง | **PASS** | sandbox เป็น compose project ของตัวเอง พอร์ตเลื่อน โทเคนสร้างเอง · connector ที่สร้างเพื่อทดสอบ cross-role ถูกลบทิ้งหลังทดสอบ เหลือ connector ตามตั้งใจสองตัวพอดี |
 
-Run totals: `smoke-bearer` 14/0 · `probe-oauth` 13/0 · `probe-trueforge` 11/0 · `probe-gateway` 12/0.
+ยอดรวมการรัน: `smoke-bearer` 14/0 · `probe-oauth` 13/0 · `probe-trueforge` 11/0 · `probe-gateway` 12/0
 
-## Findings
+## ข้อค้นพบ
 
-### 1. On the collaboration MCP, a static Bearer does not fix who you are
+### 1. บน collaboration MCP โทเคน static ไม่ได้กำหนดว่าคุณเป็นใคร
 
-Same token, three requests, three different answers from `get_workspace_context.you_are`:
+โทเคนใบเดียวกัน ยิงสามครั้ง ได้คำตอบจาก `get_workspace_context.you_are` สามค่า:
 
-| `X-Client-Name` sent | identity reported |
+| `X-Client-Name` ที่ส่ง | identity ที่ได้ |
 | --- | --- |
 | `monthop-gmail/trueforge` | `monthop-gmail/trueforge` |
-| *(header omitted)* | `Claude Code` |
+| *(ไม่ส่ง header)* | `Claude Code` |
 | `poc-identity-probe` | `poc-identity-probe` |
 
-The name is **asserted by the caller and not bound to the token**. Authorship in the
-workspace is therefore only as trustworthy as every holder of that one token. The probe
-deliberately used a name nobody owns; no existing participant's name was borrowed.
+ชื่อเป็นสิ่งที่ **ผู้เรียกประกาศเอง ไม่ได้ผูกกับโทเคน** ความน่าเชื่อถือของ authorship ในโต๊ะจึงเท่ากับ
+ความน่าเชื่อถือของทุกคนที่ถือโทเคนใบนั้น · การทดลองจงใจใช้ชื่อที่ไม่มีใครเป็นเจ้าของ ไม่ได้สวมชื่อ
+participant ที่มีอยู่จริง
 
-Round 2 makes this sharper, not milder: the gateway now sends that header on behalf of
-everyone who calls the connector, so upstream sees one name for the whole team. Per-caller
-attribution exists only in the gateway's own records.
+รอบ 2 ทำให้ข้อนี้คมขึ้น ไม่ใช่เบาลง: ตอนนี้ gateway ส่ง header นั้นแทนทุกคนที่เรียก connector
+upstream จึงเห็นชื่อเดียวทั้งทีม การแยกรายคนมีอยู่แค่ในบันทึกของ gateway เท่านั้น
 
-*Recommendation:* bind identity to the token server-side, and treat `X-Client-Name` as a hint
-that can only narrow, never choose, the identity.
+*ข้อเสนอ:* ผูก identity กับโทเคนที่ฝั่ง server และให้ `X-Client-Name` ทำได้แค่ "แคบลง" ไม่ใช่ "เลือก" ตัวตน
 
-### 2. The hub's OAuth access_token *is* the shared role token
+### 2. access_token ที่ OAuth ของฮับออกให้ *คือ* โทเคนบทบาทใบเดิม
 
-After a complete authorization-code exchange, the issued `access_token` has the same SHA-256
-prefix as the static `IT_TOKEN`. The response advertises `expires_in: 28800`, but the value
-handed out is the same long-lived secret Nginx matches on, so the expiry is descriptive only:
-one client cannot be revoked without revoking all of them, the expiry cannot be enforced at
-the Nginx layer, and an OAuth-issued token is indistinguishable from a pasted one in an audit
-trail.
+หลังแลก authorization code จนครบขั้นตอน `access_token` ที่ได้มี SHA-256 prefix ตรงกับ `IT_TOKEN`
+แบบ static · response ประกาศ `expires_in: 28800` แต่ค่าที่ส่งมอบคือความลับใบยาวใบเดิมที่ Nginx
+ใช้เทียบ อายุที่ประกาศจึงเป็นแค่คำบรรยาย: เพิกถอน client รายตัวไม่ได้ถ้าไม่เพิกถอนทั้งหมด,
+บังคับ expiry ที่ชั้น Nginx ไม่ได้ และใน audit แยกไม่ออกว่าโทเคนมาจาก OAuth หรือจากคนแปะเอง
 
-This is also why choosing header auth at the gateway (finding 7) costs nothing in security
-terms — the OAuth path would have delivered the same secret.
+ข้อนี้ยังเป็นเหตุผลว่าทำไมการเลือก header auth ที่ gateway (ข้อค้นพบ 7) ไม่ได้เสียอะไรในเชิงความปลอดภัย
+— เส้น OAuth ก็จะส่งมอบความลับก้อนเดียวกันอยู่ดี
 
-### 3. OAuth client state is in memory; restart wipes it, Bearer keeps working
+### 3. state ของ OAuth อยู่ใน memory · restart แล้วหาย ส่วน Bearer ไม่กระทบ
 
-A refresh token minted before `docker compose restart mcp-oauth` returns `invalid_client`
-after it. Static Bearer traffic answers 200 across the same restart. During the seconds the
-service is down, `/authorize` and `/token` return 502 while `/mcp/it/mcp` keeps serving.
+refresh token ที่ออกก่อน `docker compose restart mcp-oauth` พอ restart เสร็จจะได้ `invalid_client`
+ขณะที่ทาง static Bearer ตอบ 200 ตลอดช่วงเดียวกัน · ระหว่างวินาทีที่ service ลง `/authorize` กับ
+`/token` ตอบ 502 แต่ `/mcp/it/mcp` ยังเสิร์ฟปกติ
 
-An OAuth-connected agent loses its connection on every deploy; a Bearer-connected one does
-not. Expected limitation of MemoryStore, not a regression — but it makes OAuth the less
-reliable of the two paths today, which is the opposite of what a reader would assume.
+agent ที่ต่อด้วย OAuth จะหลุดทุกครั้งที่ deploy ส่วนตัวที่ต่อด้วย Bearer ไม่หลุด · เป็นข้อจำกัดที่
+คาดไว้ของ MemoryStore ไม่ใช่ regression แต่ทำให้ OAuth เป็นเส้นทางที่เสถียรน้อยกว่าในวันนี้
+ซึ่งตรงข้ามกับที่คนอ่านจะเดา
 
-### 4. The harness handles the two servers well — with one misleading status
+### 4. harness จัดการสอง server ได้ดี — แต่มี status ตัวหนึ่งที่ชวนเข้าใจผิด
 
-TrueForge 0.1.4 reached both servers, redacted stored header secrets in every API response,
-ran DCR + PKCE S256 on its own, and surfaced the hub's 403 verbatim instead of swallowing it.
+TrueForge 0.1.4 ต่อได้ทั้งสองฝั่ง, redact header secret ในทุก response ของ API, ทำ DCR + PKCE S256
+เองครบ และส่งต่อ 403 ของฮับออกมาตรง ๆ ไม่กลืน
 
-But a connector configured with a credential that is refused upstream still reports
-`auth_status: authenticated`. The field tracks *"a credential is attached"*, not *"the
-credential works"*. Worth knowing before anyone builds a health view on it.
+แต่ connector ที่ถือ credential ซึ่ง upstream ปฏิเสธ ยังรายงาน `auth_status: authenticated`
+ฟิลด์นี้ติดตามว่า *"มี credential ผูกอยู่"* ไม่ใช่ *"credential ใช้ได้"* — ใครจะทำหน้า health
+อย่าอิงฟิลด์นี้
 
-### 5. TrueForge is not a gateway, and the gateway is not TrueForge
+### 5. TrueForge ไม่ใช่ gateway และ gateway ไม่ใช่ TrueForge
 
-The harness connects to MCP servers; it never serves MCP. Its API has 47 routes and none
-speaks the protocol — `/api/v1/mcp-servers*` manages connectors. There is no
-`StreamableHTTPServerTransport` or `new McpServer()` in the server packages; the MCP server it
-does construct is handed into the agent sandbox. And tool calls happen only inside an agent
-turn, which needs a model provider, so a gateway built on it would bill an LLM round trip per
-tool read.
+harness ต่อไปยัง MCP server แต่ไม่เคยเสิร์ฟ MCP เอง · API ของมันมี 47 เส้นและไม่มีเส้นไหนพูด
+โปรโตคอล MCP — `/api/v1/mcp-servers*` เอาไว้จัดการ connector · ในแพ็กเกจฝั่ง server ไม่มี
+`StreamableHTTPServerTransport` หรือ `new McpServer()` ตัว MCP server ที่มันสร้างถูกส่งเข้า
+sandbox ของ agent · และการเรียก tool เกิดใน agent turn เท่านั้นซึ่งต้องมี model provider
+gateway ที่สร้างบนมันจึงต้องจ่ายค่า LLM หนึ่งรอบต่อการอ่านหนึ่งครั้ง
 
-The gateway is a separate installation in the TrueFoundry control plane
-(`listGatewayInstallations` → `resolveDefaultGatewayUrl`), which is what round 2 used.
+ตัว gateway เป็น installation แยกต่างหากใน control plane ของ TrueFoundry
+(`listGatewayInstallations` → `resolveDefaultGatewayUrl`) ซึ่งคือสิ่งที่รอบ 2 ใช้
 
-### 6. The gateway's OAuth cannot satisfy the hub's PKCE rule
+### 6. OAuth ของ gateway เข้ากติกา PKCE ของฮับไม่ได้
 
-The hub requires PKCE unless the caller is *publicish*
-(`publicish = isPublicClient(clientId) || isTrustedRedirectUri(redirectUri)`, `app.ts:362`).
-The gateway's redirect host is not on the hub's trusted list — a short allowlist of AI vendor
-hosts plus loopback, kept so that clients which cannot do PKCE can still connect — and the
-gateway sends no `code_challenge`. Both escape routes were tried and both dead-end, each
-reproduced against the local sandbox on unmodified upstream code:
+ฮับบังคับ PKCE เว้นแต่ผู้เรียกเป็น *publicish*
+(`publicish = isPublicClient(clientId) || isTrustedRedirectUri(redirectUri)`, `app.ts:362`)
+โฮสต์ redirect ของ gateway ไม่อยู่ในรายชื่อที่ฮับเชื่อถือ — เป็น allowlist สั้น ๆ ของโฮสต์ผู้ให้บริการ AI
+บวก loopback ซึ่งมีไว้ให้ client ที่ทำ PKCE ไม่ได้ยังต่อได้ — และ gateway ก็ไม่ส่ง `code_challenge`
+ทางหนีมีสองทางและตันทั้งคู่ โดยจำลองซ้ำกับ sandbox ด้วยโค้ด upstream ที่ไม่แก้อะไร:
 
-| connector config | result |
+| การตั้งค่า connector | ผล |
 | --- | --- |
-| DCR (`registration_url`) + gateway redirect + no PKCE | `400` "ไคลเอนต์ต้องส่ง code_challenge (PKCE)" |
-| the hub's seeded public client + gateway redirect + no PKCE | `400 invalid_client` — that client carries `redirectUris: []` and only *trusted* hosts get auto-added |
-| the same public client + a redirect host already on the allowlist + no PKCE | `200`, consent page renders |
+| DCR (`registration_url`) + redirect ของ gateway + ไม่มี PKCE | `400` "ไคลเอนต์ต้องส่ง code_challenge (PKCE)" |
+| public client ที่ฮับ seed ไว้ + redirect ของ gateway + ไม่มี PKCE | `400 invalid_client` — client ตัวนั้นมี `redirectUris: []` และเติมให้เฉพาะโฮสต์ที่ *trusted* |
+| public client ตัวเดิม + redirect ที่อยู่ใน allowlist อยู่แล้ว + ไม่มี PKCE | `200` หน้า consent ขึ้นปกติ |
 
-The third row isolates the variable: the only difference is the host allowlist. Setting
-`use_pkce` / `pkce` / `code_challenge_method` on the connector changes nothing — the API
-stores unknown fields silently (even `__unknown_probe__` is accepted), so acceptance is not
-evidence of support.
+แถวที่สามคือตัวแยกตัวแปร: ต่างกันแค่ชื่อโฮสต์ใน allowlist เท่านั้น · การตั้ง `use_pkce` /
+`pkce` / `code_challenge_method` ที่ connector ไม่เปลี่ยนอะไร เพราะ API เก็บฟิลด์ที่ไม่รู้จักไว้เงียบ ๆ
+(แม้แต่ `__unknown_probe__` ก็ผ่าน) การที่มันรับค่าจึงไม่ใช่หลักฐานว่ารองรับ
 
-Adding the gateway's host to that allowlist would unblock both checks at once, and is the same
-trust already granted to the AI vendor hosts on it. **It was not applied to
-any site** — it is a production change and a deliberate PKCE exemption, so it belongs to the
-owner, not to a PoC.
+การเติมโฮสต์ของ gateway ลง allowlist นั้นจะปลดทั้งสองด่านพร้อมกัน และเป็นความเชื่อถือระดับเดียวกับ
+ที่โฮสต์ผู้ให้บริการ AI ในรายการได้อยู่แล้ว · **แต่ไม่ได้แก้ให้ไซต์ไหนทั้งนั้น** เพราะเป็นการแก้
+production และเป็นการยกเว้น PKCE โดยเจตนา จึงเป็นเรื่องของเจ้าของงาน ไม่ใช่ของ PoC
 
-### 7. What the gateway connectors actually run on
+### 7. connector บน gateway วางอยู่บนอะไรจริง ๆ
 
-Both connectors use `auth_data.type: "header"` with `auth_level: "global"`. Collaboration
-carries `Authorization` plus `X-Client-Name`; the IT Ops connector carries `Authorization`
-with the site's IT role token. Given finding 2, this is not a weaker choice than OAuth — it is
-the same secret with fewer moving parts.
+ทั้งสอง connector ใช้ `auth_data.type: "header"` กับ `auth_level: "global"` · ฝั่ง collaboration
+ถือ `Authorization` กับ `X-Client-Name` ส่วน connector ของ IT Ops ถือ `Authorization` ที่เป็น
+โทเคนบทบาท IT ของไซต์ · เมื่อดูข้อค้นพบ 2 แล้ว นี่ไม่ใช่ตัวเลือกที่อ่อนกว่า OAuth — มันคือความลับ
+ก้อนเดียวกันโดยมีชิ้นส่วนน้อยกว่า
 
-Discovered while configuring, since it is not in the public docs: `auth_data.type` accepts
-exactly `header`, `passthrough` and `oauth2`, and `header` accepts exactly one `auth_level`,
-`global` — every other value is rejected with `Unsupported header auth_level`.
+ของที่ค้นเจอระหว่างตั้งค่าและไม่มีในเอกสารสาธารณะ: `auth_data.type` รับเฉพาะ `header`,
+`passthrough` และ `oauth2` และ `header` รับ `auth_level` ค่าเดียวคือ `global` ค่าอื่นถูกปฏิเสธ
+ด้วยข้อความ `Unsupported header auth_level`
 
-### 8. The one thing a gateway is for is still untested
+### 8. สิ่งที่ gateway มีไว้ทำ ยังไม่ได้ทดสอบ
 
-Every gateway call in this round was made by a single principal that is allowed everywhere.
-So "the gateway refuses a caller who has no business on this connector" — the property that
-makes a gateway worth having, and the half of AC3 that upstream RBAC cannot stand in for — is
-**NOT RUN**. Closing it needs a second TrueFoundry principal (a virtual account or a second
-user's PAT) with no permission on these connectors. The free Developer tier allows three
-users, so this costs nothing but a decision.
+ทุก call ที่ผ่าน gateway ในรอบนี้มาจาก principal เดียวที่มีสิทธิ์ทุกที่ ดังนั้นคุณสมบัติที่ว่า
+"gateway ปฏิเสธผู้เรียกที่ไม่ควรมาแตะ connector นี้" — ซึ่งเป็นเหตุผลที่ gateway มีค่า และเป็น
+ครึ่งของ AC3 ที่ RBAC ของ upstream แทนไม่ได้ — จึงเป็น **NOT RUN**
 
-## Go / No-go for round 3
+การปิดข้อนี้ต้องมี principal ที่สองบน TrueFoundry (virtual account หรือ PAT ของผู้ใช้อีกคน)
+ที่ไม่มีสิทธิ์บน connector เหล่านี้ · แผน Developer แบบฟรีให้ 3 users จึงไม่มีค่าใช้จ่ายใด ๆ
+เหลือแค่การตัดสินใจ
 
-**Go** for internal team use over either path: direct for anything running on the office
-network, gateway for anything that should reach both systems through one door with one
-inbound credential.
+## Go / No-go สำหรับรอบ 3
 
-**No-go** for anything that depends on per-caller authorization, per-client revocation, or
-trustworthy authorship in the shared workspace, until:
+**Go** สำหรับการใช้งานภายในทีมบนเส้นทางใดก็ได้: ทางตรงสำหรับสิ่งที่รันอยู่ในเครือข่ายออฟฟิศ
+และ gateway สำหรับสิ่งที่ควรเข้าถึงทั้งสองระบบผ่านประตูเดียวด้วย credential ขาเข้าชุดเดียว
 
-1. finding 8 is closed — until then "the gateway enforces access" is an assumption;
-2. finding 1 is decided — token-bound identity, or an explicit ruling that workspace
-   authorship is advisory;
-3. the owner rules on finding 6 — allowlist the gateway host and get real OAuth, or stay on
-   header credentials and accept a shared secret per connector;
-4. the hub gets durable OAuth storage if OAuth is to be the recommended path (finding 3).
+**No-go** สำหรับอะไรก็ตามที่พึ่งการอนุญาตรายผู้เรียก การเพิกถอนรายตัว หรือความน่าเชื่อถือของ
+authorship ในโต๊ะ จนกว่า:
 
-Also still open from round 1: a throwaway collaboration deployment (unblocks collaboration
-OAuth and write tests) and a model provider credential (turns AC2's harness half into PASS).
+1. ข้อค้นพบ 8 ถูกปิด — ก่อนหน้านั้น "gateway บังคับสิทธิ์ให้" ยังเป็นข้อสันนิษฐาน
+2. ข้อค้นพบ 1 ถูกตัดสิน — จะผูก identity กับโทเคน หรือประกาศว่า authorship ในโต๊ะเป็นข้อมูลประกอบ
+3. เจ้าของงานตัดสินข้อค้นพบ 6 — เติมโฮสต์ของ gateway ลง allowlist แล้วได้ OAuth จริง
+   หรืออยู่กับ credential แบบ header แล้วยอมรับว่าเป็นความลับที่ใช้ร่วมกันต่อ connector
+4. ฮับมีที่เก็บ OAuth แบบถาวร ถ้าจะให้ OAuth เป็นเส้นทางที่แนะนำ (ข้อค้นพบ 3)
 
-**Data-path note for whoever signs off:** on the gateway path, tool traffic for both systems
-transits TrueFoundry's cloud. Everything measured here was fixture data — the <site> RAG
-backend reports `backend=fixture sample=true` — so no site data left the network during this
-PoC. Pointing the gateway at a hub with real site data is a separate decision.
+ที่ยังค้างจากรอบ 1: deployment ทดสอบของ collaboration (ปลด OAuth และการทดสอบเขียนของ collab)
+และ credential ของ model provider (ทำให้ครึ่ง harness ของ AC2 เป็น PASS)
+
+**หมายเหตุเรื่องเส้นทางข้อมูล สำหรับคนที่ต้องเซ็นอนุมัติ:** บนเส้นทาง gateway ทราฟฟิกของ tool call
+ทั้งสองระบบวิ่งผ่านคลาวด์ของ TrueFoundry · ทุกอย่างที่วัดในรอบนี้เป็นข้อมูล fixture — RAG ของ
+ฮับไซต์รายงาน `backend=fixture sample=true` — จึงไม่มีข้อมูลไซต์ออกจากเครือข่ายระหว่าง PoC
+การชี้ gateway ไปที่ฮับที่มีข้อมูลไซต์จริงเป็นการตัดสินใจคนละใบ
