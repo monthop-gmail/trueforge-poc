@@ -1,7 +1,9 @@
 # Runbook — deployment ทดสอบของ ai-collaboration-mcp
 
-เตรียมไว้ตาม dis-bc779b20 seq 22 · **ยังไม่ deploy และยังไม่สร้าง secret จริง**
-ทุกอย่างในใบนี้คือสิ่งที่จะทำ *หลัง* เจ้าของงานอนุมัติ ไม่ใช่สิ่งที่ทำไปแล้ว
+เจ้าของงานอนุมัติแล้วใน dis-bc779b20 seq 23 · **ทำไปแล้วตามใบนี้** ผลอยู่ใน
+`../../evidence/collab-test-deployment.txt`
+
+ใบนี้จึงเป็นทั้งบันทึกว่าทำอะไรไป และขั้นตอนสำหรับทำซ้ำหรือรื้อทิ้ง
 
 ## สิ่งที่จะสร้าง และสิ่งที่จะไม่แตะ
 
@@ -9,6 +11,7 @@
 | --- | --- |
 | Worker สำหรับทดสอบ | `ai-collaboration-mcp-poc` |
 | ฐาน D1 ใหม่ | `ai-collab-poc` |
+| KV namespace ใหม่สำหรับ `OAUTH_KV` | ของ Worker ทดสอบเท่านั้น |
 | secret ของ Worker ทดสอบ | `MCP_AUTH_TOKEN`, `MCP_AUTH_TOKENS`, `MCP_READONLY_TOKENS` — สร้างสดตอน deploy |
 | ที่อยู่สาธารณะ | `workers.dev` ของ Worker ตัวนี้เท่านั้น |
 
@@ -17,7 +20,11 @@
 
 ชื่อทั้งสองปรับได้ตามที่เจ้าของงานกำหนด ใบนี้ล็อกแค่รูปแบบ ไม่ได้ล็อกชื่อ
 
-## ขั้นตอน (รันหลังได้รับอนุมัติเท่านั้น)
+**ทำไมต้องแยก KV ด้วย ไม่ใช่แค่ D1** — `OAUTH_KV` เก็บ client, grant และ token ของ OAuth
+ถ้า Worker ทดสอบใช้ namespace เดียวกับของจริง ของสองฝั่งจะอยู่ในที่เดียวกัน ซึ่งเป็นสิ่งที่
+`wrangler.jsonc` ของ repo เตือนไว้เองอยู่แล้วในบริบทของ server คนละตัว
+
+## ขั้นตอน
 
 ```bash
 cd <clone ของ ai-collaboration-mcp>            # branch poc/readonly-route
@@ -26,9 +33,13 @@ wrangler whoami                                 # ยืนยันว่าเ
 # 1. ฐานใหม่ แล้วจดค่า database_id ที่ได้กลับมา
 wrangler d1 create ai-collab-poc
 
-# 2. config แยกไฟล์ ไม่แก้ wrangler.jsonc ของจริง
-#    name = ai-collaboration-mcp-poc, d1_databases[0].database_id = ค่าจากขั้น 1
-#    workers_dev = true และไม่ใส่ routes/custom domain
+# 2. KV ใหม่สำหรับ OAuth ของ Worker ทดสอบ แล้วจดค่า id ที่ได้
+wrangler kv namespace create ai-collab-poc-oauth
+
+# 3. config แยกไฟล์ ไม่แก้ wrangler.jsonc ของจริง
+#    name = ai-collaboration-mcp-poc
+#    d1_databases[0] = ฐานจากขั้น 1 · kv_namespaces[0].id = ค่าจากขั้น 2
+#    workers_dev = true, preview_urls = false และไม่ใส่ routes/custom domain
 cp wrangler.jsonc wrangler.poc.jsonc            # แล้วแก้สามจุดข้างต้น
 
 # 3. schema ลงฐานใหม่
@@ -70,6 +81,8 @@ isolation และ regression ของเส้นปกติ
 ```bash
 wrangler delete --name ai-collaboration-mcp-poc
 wrangler d1 delete ai-collab-poc
+wrangler kv namespace delete --namespace-id <id ของ KV ที่สร้างไว้>
+# และลบ connector poc-collab-readonly ออกจาก gateway
 ```
 แล้วทิ้งค่า RW/RO ที่สร้างไว้ · ไม่มีอะไรค้างในบัญชี และไม่มีอะไรที่ต้องเพิกถอนฝั่งของจริง
 เพราะ secret ของ Worker ทดสอบเป็นคนละชุดตั้งแต่ต้น

@@ -1,0 +1,53 @@
+# Collab test deployment + Gateway read-only E2E
+# อนุมัติใน dis-bc779b20 seq 23 · ทุกอย่างเป็น resource ทดสอบที่สร้างใหม่ แยกจากของจริง
+# hostname และ subdomain ถูกแทนด้วย placeholder ก่อนขึ้น repo สาธารณะ ไม่มี token ในไฟล์นี้
+run-at: 2026-09-17
+
+== resource ที่สร้าง (ไว้ cleanup ตอนจบรอบ) ==
+Worker  : ai-collaboration-mcp-poc            (workers.dev เท่านั้น ไม่ผูก custom domain)
+D1      : ai-collab-poc                        (ฐานใหม่ seed จาก schema.sql อย่างเดียว)
+KV      : namespace ใหม่สำหรับ OAUTH_KV ของ Worker ทดสอบ
+secret  : MCP_AUTH_TOKEN / MCP_AUTH_TOKENS / MCP_READONLY_TOKENS สร้างสดทั้งสามตัว ไม่ใช้ซ้ำของเดิม
+connector บน gateway : poc-collab-readonly    (header auth ด้วย RO token ของชุดทดสอบเท่านั้น)
+config  : wrangler.poc.jsonc บน branch poc/readonly-route ไม่แตะ wrangler.jsonc ของจริง
+
+# KV ต้องแยกด้วย ไม่ใช่แค่ D1 — ถ้าใช้ namespace เดียวกับของจริง grant และ token ของ
+# OAuth สองฝั่งจะอยู่ในที่เดียวกัน
+
+== 1. E2E บน public test endpoint ==
+scripts/probe-collab-readonly.sh : 21 passed / 0 failed
+  route x credential ครบสี่ทิศ · เส้นอ่านตอบ 401 ของตัวเองไม่ตกไป OAuth ของเส้นปกติ
+  tools/list : เส้นอ่าน 6 tools / เส้นปกติ 15 · ไม่มี write tool โผล่ในเส้นอ่าน
+  write tools ทั้งเก้า เรียกตรง ๆ ด้วย argument ที่ valid : ถูกปฏิเสธทั้งหมด
+  read tools : ทำงาน
+  bypass เจ็ดรูปแบบ : ไม่มีอันไหนผ่าน
+  handler-cache isolation : เส้นอ่านยังสะอาดหลังแตะเส้นปกติ
+  regression เส้นปกติ : เขียนได้ (เปิด write probe เฉพาะกับฐานทดสอบนี้)
+
+== 2. redeploy / cold start ==
+deploy ซ้ำแล้วรันทันที : 20 passed / 0 failed / 1 skipped
+  (ที่ skip คือ write probe ซึ่งปิดไว้ในรอบนี้โดยตั้งใจ ไม่ใช่ความล้มเหลว)
+ผลเท่ากับตอน warm ทุกข้อ
+
+== 3. แยกจาก workspace จริงจริงหรือไม่ ==
+get_workspace_context บนฐานทดสอบ : discussions=1 (มาจาก write probe ของเราเอง)
+participants=0 · you_are = ชื่อของโทเคนชุดทดสอบ ไม่ใช่ชื่อทีมในโต๊ะจริง
+ws-001 ไม่ถูกแตะเลยตลอดการทดสอบ
+
+== 4. Gateway read-only E2E ==
+connector poc-collab-readonly ชี้ไป /mcp-readonly ด้วย RO token ของชุดทดสอบ
+ยิงผ่าน gateway : initialize OK · tools/list เห็น 6 tools อ่านล้วน ไม่มี write tool
+เรียก post_message / create_task / record_decision ตรง ๆ ผ่าน gateway : ถูกปฏิเสธทั้งสาม
+read tool ผ่าน gateway : ทำงาน
+
+== 5. ชั้นไหนเป็นผู้ปฏิเสธ — แยกได้ชัด ==
+upstream (Worker) : "Tool post_message disabled"
+gateway           : "User <principal> is not authorized to access MCP server: poc-collab-readonly"
+ทดสอบชั้น gateway ด้วย virtual account ที่ไม่มี role binding บน connector เดียวกัน
+สองข้อความมาจากคนละชั้น รูปแบบต่างกันชัด ไม่ปนกัน
+
+== ข้อจำกัดที่ต้องระบุคู่กับผล ==
+รอบนี้พิสูจน์ shared credential ต่อหนึ่งเส้นทาง ไม่ใช่ per-user identity
+upstream ยังเห็นตัวตนเดียวต่อหนึ่ง credential
+ฝั่ง hub read-only route ยังไม่ได้ทดสอบผ่าน gateway เพราะ route นั้นอยู่บน sandbox ในเครื่อง
+ซึ่ง gateway บนคลาวด์เข้าไม่ถึง และ hub ของไซต์เป็น production ที่ยังไม่อนุมัติให้แตะ
