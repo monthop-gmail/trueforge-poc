@@ -25,11 +25,19 @@ OAuth provider จึงตอบ 401 เองเมื่อรหัสไม
 
 `src/env.ts` — ประกาศ `MCP_READONLY_TOKENS`
 
-รวม **2 ไฟล์แก้ 59 เพิ่ม 7 ลบ** และไฟล์ใหม่ 1 ไฟล์
+`test/readonly.test.ts` — regression test ถาวร 16 เคส ครอบสองกรณีที่ seq 20 สั่งให้ตรึงไว้
+โดยเฉพาะ: **cache ของ handler ต้องแยกตามเส้นทาง** (เรียกเส้นปกติก่อนแล้วเส้นอ่าน ต้องไม่ได้ tool
+ชุดของเส้นปกติมา) และ **เส้นอ่านต้องไม่ตกไปที่ OAuth provider ของเส้นปกติ** (รหัสไม่ผ่านต้องได้
+401 ของเส้นนี้เอง พร้อม detail ที่อ้าง `MCP_READONLY_TOKENS`) · ที่เหลือคือ route/credential
+matrix, การซ่อน write tool จาก tools/list และการปฏิเสธ write tool ทั้งเก้าตัวเมื่อเรียกตรง ๆ
+
+รวม **2 ไฟล์แก้ 59 เพิ่ม 7 ลบ** และไฟล์ใหม่ 2 ไฟล์ (`src/readonly.ts`, `test/readonly.test.ts`)
 
 ## ผลทดสอบ
 
-เต็มอยู่ใน `../../evidence/readonly-collab.txt` · สรุป: route/credential matrix แยกขาดทั้งสองทาง ·
+`npx vitest run` ทั้ง repo: **181 tests ผ่านทั้งหมด** (เดิม 165 + ใหม่ 16) ไม่มีเคสเดิมถอยหลัง
+
+หลักฐานจากการยิงจริงเต็มอยู่ใน `../../evidence/readonly-collab.txt` · สรุป: route/credential matrix แยกขาดทั้งสองทาง ·
 `tools/list` บนเส้น read-only เห็น 6 tool อ่านเท่านั้น ไม่มี write tool โผล่ · เรียก write tool
 ทั้งเก้าตัวด้วยชื่อจริงและ argument ที่ valid ถูกปฏิเสธทั้งหมด · bypass/normalization 7 แบบไม่ผ่าน ·
 policy คงอยู่หลัง restart · เส้นปกติยังเขียนได้เหมือนเดิม · `npm run typecheck` ผ่าน

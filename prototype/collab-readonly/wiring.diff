@@ -139,3 +139,209 @@ index f2582c8..312acd6 100644
      // ที่เหลือเป็นของ provider — endpoint ของ OAuth, discovery metadata, หน้า
      // consent, /health และ /mcp ที่ไม่มี static bearer ซึ่งจะได้ 401 พร้อม
      // `WWW-Authenticate` ที่ client ใช้หา metadata ต่อ
+diff --git a/src/readonly.ts b/src/readonly.ts
+new file mode 100644
+index 0000000..e1dc3f2
+--- /dev/null
++++ b/src/readonly.ts
+@@ -0,0 +1,44 @@
++import type { McpServer } from "@modelcontextprotocol/server";
++
++/**
++ * Tools the read-only route exposes. Deny-by-default: anything not on this list
++ * is registered and then disabled, so a tool added to the workspace later is
++ * unreachable on this route until someone puts it here on purpose.
++ */
++export const READ_ONLY_TOOLS: readonly string[] = [
++  "get_workspace_context",
++  "get_discussion",
++  "get_tasks",
++  "get_handoffs",
++  "get_plans",
++  "get_decisions",
++];
++
++/**
++ * Wraps the server so every registration passes through the allowlist.
++ *
++ * Disabling rather than skipping registration buys both things the table asked
++ * for at once: the SDK filters disabled tools out of `tools/list`, and a direct
++ * `tools/call` on one answers `Tool <name> disabled` — an explicit refusal from
++ * the server, not the `unknown tool` you would get by never registering it.
++ */
++export function withReadOnlyGuard(server: McpServer, allow: readonly string[] = READ_ONLY_TOOLS): McpServer {
++  const allowed = new Set(allow);
++  return new Proxy(server, {
++    get(target, prop, receiver) {
++      const value = Reflect.get(target, prop, receiver);
++      if (prop !== "registerTool" || typeof value !== "function") {
++        return typeof value === "function" ? value.bind(target) : value;
++      }
++      return (name: string, ...rest: unknown[]) => {
++        const registered = (value as (...a: unknown[]) => { disable?: () => void }).call(
++          target,
++          name,
++          ...rest,
++        );
++        if (!allowed.has(name)) registered?.disable?.();
++        return registered;
++      };
++    },
++  });
++}
+diff --git a/test/readonly.test.ts b/test/readonly.test.ts
+new file mode 100644
+index 0000000..2dbd03a
+--- /dev/null
++++ b/test/readonly.test.ts
+@@ -0,0 +1,150 @@
++import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
++import { beforeAll, describe, expect, it } from "vitest";
++import worker from "../src/index";
++import { applySchema } from "./apply-schema";
++
++/**
++ * เส้นทางอ่านอย่างเดียวต้องกันสองอย่างที่พังเงียบได้
++ *
++ * หนึ่ง — cache ของ handler เดิม key ด้วยชื่อผู้เรียกอย่างเดียว ถ้าไม่รวมเส้นทาง
++ * เข้าไปด้วย คำขอที่มาทีหลังบนอีกเส้นจะได้ server ตัวที่ประกอบไว้สำหรับเส้นแรก
++ * แปลว่า tool ที่ปิดไว้จะกลายเป็นเปิด โดยไม่มีอะไรฟ้อง
++ *
++ * สอง — เส้น read-only ไม่ได้ผูกกับ OAuth provider ถ้าปล่อยให้คำขอที่รหัสไม่ผ่าน
++ * ตกไปถึง provider มันจะพาผู้เรียกเข้า flow ของเส้นปกติ ซึ่งเป็นเส้นที่เขียนได้
++ */
++
++const RW = "rw-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
++const RO = "ro-token-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
++
++const testEnv = {
++  ...env,
++  MCP_AUTH_TOKEN: RW,
++  MCP_AUTH_TOKENS: `${RW}=test-team`,
++  MCP_READONLY_TOKENS: `${RO}=test-team-readonly`,
++  ALLOWED_ORIGIN_HOSTNAMES: "*",
++} as unknown as Parameters<typeof worker.fetch>[1];
++
++const WRITE_TOOLS = [
++  "post_message",
++  "create_task",
++  "record_decision",
++  "create_handoff",
++  "create_discussion",
++  "update_task",
++  "accept_handoff",
++  "record_plan",
++  "resolve_decision",
++];
++
++async function call(path: string, token: string | undefined, body: unknown): Promise<Response> {
++  const ctx = createExecutionContext();
++  const response = await worker.fetch(
++    new Request(`https://example.test${path}`, {
++      method: "POST",
++      headers: {
++        "content-type": "application/json",
++        accept: "application/json, text/event-stream",
++        ...(token ? { authorization: `Bearer ${token}` } : {}),
++      },
++      body: JSON.stringify(body),
++    }),
++    testEnv,
++    ctx,
++  );
++  await waitOnExecutionContext(ctx);
++  return response;
++}
++
++/** คำตอบมาเป็น SSE frame — เอาบรรทัด data แรกพอ */
++async function payload(response: Response): Promise<Record<string, unknown>> {
++  const text = await response.text();
++  const line = text.split("\n").find((entry) => entry.startsWith("data: "));
++  return JSON.parse(line ? line.slice(6) : text) as Record<string, unknown>;
++}
++
++const INIT = {
++  jsonrpc: "2.0",
++  id: 1,
++  method: "initialize",
++  params: {
++    protocolVersion: "2025-06-18",
++    capabilities: {},
++    clientInfo: { name: "readonly-test", version: "0.1.0" },
++  },
++};
++
++beforeAll(async () => {
++  await applySchema();
++});
++
++describe("รหัสผูกกับเส้นทาง", () => {
++  it("รหัสของเส้นอ่านเข้าเส้นปกติไม่ได้", async () => {
++    expect((await call("/mcp", RO, INIT)).status).toBe(401);
++  });
++
++  it("รหัสของเส้นปกติเข้าเส้นอ่านไม่ได้", async () => {
++    expect((await call("/mcp-readonly", RW, INIT)).status).toBe(401);
++  });
++
++  it("ไม่มีรหัส เข้าเส้นอ่านไม่ได้", async () => {
++    expect((await call("/mcp-readonly", undefined, INIT)).status).toBe(401);
++  });
++
++  it("รหัสถูกเส้นถูก ผ่าน", async () => {
++    expect((await call("/mcp-readonly", RO, INIT)).status).toBe(200);
++    expect((await call("/mcp", RW, INIT)).status).toBe(200);
++  });
++});
++
++describe("เส้นอ่านไม่ตกไปที่ OAuth provider ของเส้นปกติ", () => {
++  it("รหัสไม่ผ่าน ต้องได้ 401 ของเส้นนี้เอง ไม่ใช่ flow ของเส้นปกติ", async () => {
++    const response = await call("/mcp-readonly", "not-a-real-token", INIT);
++    expect(response.status).toBe(401);
++    const body = (await response.json()) as { error?: string; detail?: string };
++    expect(body.error).toBe("unauthorized");
++    expect(body.detail).toContain("MCP_READONLY_TOKENS");
++  });
++});
++
++describe("tool ที่เขียนได้ถูกซ่อนและถูกปฏิเสธ", () => {
++  it("tools/list บนเส้นอ่าน ไม่มี tool ที่เขียนได้", async () => {
++    const body = await payload(
++      await call("/mcp-readonly", RO, { jsonrpc: "2.0", id: 2, method: "tools/list" }),
++    );
++    const names = ((body.result as { tools: Array<{ name: string }> }).tools ?? []).map((t) => t.name);
++    expect(names.length).toBeGreaterThan(0);
++    for (const tool of WRITE_TOOLS) expect(names).not.toContain(tool);
++  });
++
++  it.each(WRITE_TOOLS)("เรียก %s ตรง ๆ บนเส้นอ่าน ถูกปฏิเสธ", async (tool) => {
++    const body = await payload(
++      await call("/mcp-readonly", RO, {
++        jsonrpc: "2.0",
++        id: 3,
++        method: "tools/call",
++        params: { name: tool, arguments: {} },
++      }),
++    );
++    const text = JSON.stringify(body);
++    // ปฏิเสธโดยระบุชื่อ tool ไม่ใช่ unknown tool และไม่ใช่การทำงานสำเร็จ
++    expect(text).toContain(tool);
++    expect(text).toContain("disabled");
++  });
++});
++
++describe("cache ของ handler แยกตามเส้นทาง", () => {
++  it("เรียกเส้นปกติก่อน แล้วเส้นอ่าน ต้องไม่ได้ tool ชุดของเส้นปกติมา", async () => {
++    // ลำดับนี้สำคัญ: ถ้า key ของ cache ไม่รวมเส้นทาง คำขอที่สองจะได้ server ตัวแรก
++    await call("/mcp", RW, INIT);
++    const rw = await payload(await call("/mcp", RW, { jsonrpc: "2.0", id: 2, method: "tools/list" }));
++    const ro = await payload(
++      await call("/mcp-readonly", RO, { jsonrpc: "2.0", id: 2, method: "tools/list" }),
++    );
++    const rwNames = ((rw.result as { tools: Array<{ name: string }> }).tools ?? []).map((t) => t.name);
++    const roNames = ((ro.result as { tools: Array<{ name: string }> }).tools ?? []).map((t) => t.name);
++    expect(rwNames).toContain("post_message");
++    expect(roNames).not.toContain("post_message");
++    expect(roNames.length).toBeLessThan(rwNames.length);
++  });
++});
