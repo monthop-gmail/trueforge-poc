@@ -1,4 +1,4 @@
-# prototype: `mcp-auth` — ตัวตนรายคนที่ขอบของ itops-mcp-hub
+# prototype สำหรับ itops-mcp-hub — ตัวตนรายคน และเส้นทางอ่านอย่างเดียว
 
 ข้อเสนอสำหรับ `monthop-gmail/itops-mcp-hub` (ฐานที่ใช้ทดลอง: `da63143`) — **ยังไม่ได้เปิด PR
 และยังไม่ได้ deploy ที่ไซต์ไหน** ทั้งหมดในนี้ทดสอบบน sandbox ท้องถิ่นเท่านั้น
@@ -111,6 +111,28 @@ JWKS ที่ดึงไม่สำเร็จเคยถูกโยนเ
 3. **ฮับยังไม่อ่าน `X-Actor`** — Nginx ส่งให้แล้วและ access log พิสูจน์แล้วว่ามีค่าจริง แต่
    `mcp-hub` ยังไม่เอาไปลง log ของตัวเอง
 4. **การ map principal → role** ตอนนี้เป็น JSON ใน env เหมาะกับคนไม่กี่คน ถ้าจะโตต้องมีที่เก็บจริง
+
+## ส่วนที่สอง: เส้นทางอ่านอย่างเดียว (`HUB_READ_ONLY`)
+
+ตามที่ dis-bc779b20 seq 16 ล็อกหลักออกแบบไว้: **route แยก + credential แยก + deny-by-default
+ที่จุดรวม tool** ไม่ผูก policy กับ participant identity เพราะ identity ยังเป็นเรื่องที่ยังไม่ปิด
+
+- `mcp-hub/src/readonly.ts` — allowlist ของ tool อ่าน และ Proxy ที่ครอบ `server.tool` ตอนลงทะเบียน
+  จุดเดียว ครอบทุก backend พร้อมกัน และ **tool ที่เพิ่มเข้ามาใหม่จะถูกปฏิเสธจนกว่าจะมีใครใส่ในลิสต์**
+- tool ที่ถูกปฏิเสธ **ยังถูกลงทะเบียนไว้** แต่ handler ตอบว่าไม่อนุญาต — ตั้งใจให้ผู้เรียกที่ระบุชื่อ
+  tool ได้คำตอบที่ตรวจสอบย้อนหลังได้ ไม่ใช่ `unknown tool` ที่แยกไม่ออกจากการพิมพ์ผิด
+- schema ของ tool ที่ถูกปฏิเสธถูกแทนด้วย `{}` เพราะ SDK ตรวจ argument ก่อนเรียก handler
+  ถ้าคงของเดิมไว้ ผู้เรียกที่ไม่ส่งฟิลด์บังคับจะได้ "argument ผิด" แทน "ไม่อนุญาต"
+- route `/mcp/it-readonly/` ชี้ไป hub instance ที่ตั้ง `HUB_READ_ONLY=true`
+- credential แยก `VIEWER_TOKEN` → role `viewer` ซึ่ง `mcp-auth` อนุญาตเฉพาะ path `readonly`
+  เท่านั้น จึงยกระดับไปเส้นที่เขียนได้ไม่ได้
+
+ผลทดสอบเต็มอยู่ใน `../../evidence/readonly-hub.txt` สรุป:
+`rag_reindex`, `rag_run_ocr`, `rag_submit_ocr`, `rag_review_ocr_job`, `pstack_call_tool`
+ถูกปฏิเสธเมื่อเรียกตรง ๆ **พร้อม argument ที่ถูกต้อง** · tool อ่านยังทำงาน · viewer เข้าเส้น
+`it`/`admin`/`accounting` ไม่ได้ (403) รวมถึง path traversal ทั้งแบบธรรมดาและแบบ encode ·
+policy คงอยู่หลัง restart · และ **route คือขอบเขต ไม่ใช่โทเคน** — IT token ที่เรียก `rag_reindex`
+ได้บนเส้นปกติ ก็ยังถูกปฏิเสธบนเส้น read-only
 
 ## วิธีลองซ้ำ
 

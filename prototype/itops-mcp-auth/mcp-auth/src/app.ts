@@ -2,7 +2,10 @@ import express, { type Request, type Response } from "express";
 import { log } from "@itops/mcp-common";
 import { JwksUnavailableError, JwksVerifier, JwtVerificationError } from "./jwks.js";
 
-export type HubRole = "it" | "admin" | "accounting";
+export type HubRole = "it" | "admin" | "accounting" | "viewer";
+
+/** The MCP paths Nginx guards. `readonly` is the route that only exposes read tools. */
+export type HubPath = "it" | "admin" | "accounting" | "readonly";
 
 export interface AuthConfig {
   /** Static role tokens kept so existing clients keep working during a migration. */
@@ -14,16 +17,20 @@ export interface AuthConfig {
   defaultRole?: HubRole;
 }
 
-const ROLES: HubRole[] = ["it", "admin", "accounting"];
+const ROLES: HubRole[] = ["it", "admin", "accounting", "viewer"];
+const PATHS: HubPath[] = ["it", "admin", "accounting", "readonly"];
 
 /**
  * Which roles may use which path. Mirrors the Nginx token map this replaces:
- * admin was always allowed on the IT path, accounting never was.
+ * admin was always allowed on the IT path, accounting never was. `viewer` is
+ * deliberately absent from every write-capable path — a read-only credential
+ * must not be able to reach the normal IT route and regain the mutating tools.
  */
-const ALLOWED_ROLES: Record<HubRole, HubRole[]> = {
+const ALLOWED_ROLES: Record<HubPath, HubRole[]> = {
   it: ["it", "admin"],
   admin: ["admin"],
   accounting: ["accounting"],
+  readonly: ["viewer", "it", "admin"],
 };
 
 function bearer(req: Request): string {
@@ -69,8 +76,8 @@ export function createAuthApp(config: AuthConfig): express.Express {
 }
 
 async function handleVerify(config: AuthConfig, req: Request, res: Response): Promise<void> {
-  const requested = req.params.role as HubRole;
-  if (!ROLES.includes(requested)) {
+  const requested = req.params.role as HubPath;
+  if (!PATHS.includes(requested)) {
     res.status(400).json({ error: "invalid_request", message: "Unknown role" });
     return;
   }

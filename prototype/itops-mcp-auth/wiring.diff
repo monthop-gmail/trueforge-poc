@@ -1,8 +1,8 @@
 diff --git a/docker-compose.yml b/docker-compose.yml
-index c506feb..47e61dd 100644
+index c506feb..da5aaac 100644
 --- a/docker-compose.yml
 +++ b/docker-compose.yml
-@@ -37,6 +37,29 @@ services:
+@@ -37,6 +37,30 @@ services:
        PUBLIC_MCP_ORIGIN: ${PUBLIC_MCP_ORIGIN:-}
        PUBLIC_MCP_HOSTNAME: ${PUBLIC_MCP_HOSTNAME:-}
  
@@ -20,6 +20,7 @@ index c506feb..47e61dd 100644
 +      IT_TOKEN: ${IT_TOKEN}
 +      ADMIN_TOKEN: ${ADMIN_TOKEN}
 +      ACCOUNTING_TOKEN: ${ACCOUNTING_TOKEN}
++      VIEWER_TOKEN: ${VIEWER_TOKEN:-}
 +      # Leave the JWT block empty to keep Bearer-only behaviour.
 +      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-}
 +      AUTH_JWT_JWKS_URL: ${AUTH_JWT_JWKS_URL:-}
@@ -32,7 +33,7 @@ index c506feb..47e61dd 100644
    nginx:
      build:
        context: ./nginx
-@@ -44,6 +67,8 @@ services:
+@@ -44,8 +68,12 @@ services:
      logging: *default-logging
      networks: [infra-net]
      depends_on:
@@ -40,7 +41,53 @@ index c506feb..47e61dd 100644
 +        condition: service_healthy
        mcp-hub-it:
          condition: service_healthy
++      mcp-hub-it-readonly:
++        condition: service_healthy
        mcp-hub-admin:
+         condition: service_healthy
+       mcp-hub-accounting:
+@@ -99,6 +127,41 @@ services:
+     expose:
+       - "3000"
+ 
++  mcp-hub-it-readonly:
++    build:
++      context: .
++      dockerfile: packages/Dockerfile
++      args:
++        SERVICE: mcp-hub
++    restart: unless-stopped
++    logging: *default-logging
++    networks: [infra-net]
++    depends_on:
++      sub-mcp-zabbix:
++        condition: service_healthy
++      sub-mcp-meshcentral:
++        condition: service_healthy
++      sub-mcp-rag:
++        condition: service_healthy
++      sub-mcp-zktime:
++        condition: service_healthy
++      sub-mcp-pstack:
++        condition: service_healthy
++    environment:
++      HUB_ROLE: it
++      # Deny-by-default allowlist; see packages/mcp-hub/src/readonly.ts
++      HUB_READ_ONLY: "true"
++      HUB_READ_ONLY_TOOLS: ${HUB_READ_ONLY_TOOLS:-}
++      PORT: "3000"
++      MCP_PUBLIC_BASE_PATH: /mcp/it-readonly
++      ZABBIX_MCP_URL: http://sub-mcp-zabbix:3000
++      MESHCENTRAL_MCP_URL: http://sub-mcp-meshcentral:3000
++      ZKTIME_MCP_URL: http://sub-mcp-zktime:3000
++      PSTACK_MCP_URL: http://sub-mcp-pstack:3000
++      RAG_MCP_URL: http://sub-mcp-rag:3000
++    expose:
++      - "3000"
++
+   mcp-hub-admin:
+     build:
+       context: .
 diff --git a/nginx/Dockerfile b/nginx/Dockerfile
 index 8657262..ab7453f 100644
 --- a/nginx/Dockerfile
@@ -76,7 +123,7 @@ index db34d6e..3be6d13 100644
 +proxy_set_header X-Actor $mcp_actor;
 +proxy_set_header X-Actor-Source $mcp_actor_source;
 diff --git a/nginx/nginx.conf.template b/nginx/nginx.conf.template
-index 03d0ded..9d74804 100644
+index 03d0ded..244ec32 100644
 --- a/nginx/nginx.conf.template
 +++ b/nginx/nginx.conf.template
 @@ -16,7 +16,7 @@ http {
@@ -124,7 +171,37 @@ index 03d0ded..9d74804 100644
              error_page 401 = @error401_it;
              error_page 403 = @error403;
  
-@@ -140,6 +141,9 @@ http {
+@@ -129,6 +130,29 @@ http {
+             include /etc/nginx/mcp_proxy.conf;
+         }
+ 
++        location /mcp/it-readonly/ {
++            if ($request_method = OPTIONS) {
++                add_header Access-Control-Allow-Origin * always;
++                add_header Access-Control-Allow-Methods "GET, POST, DELETE, OPTIONS" always;
++                add_header Access-Control-Allow-Headers "Authorization, Content-Type, MCP-Protocol-Version, mcp-session-id, Last-Event-ID" always;
++                add_header Access-Control-Max-Age 86400 always;
++                add_header Access-Control-Expose-Headers "WWW-Authenticate, mcp-session-id" always;
++                return 204;
++            }
++
++            auth_request /_auth_readonly;
++            auth_request_set $mcp_actor $upstream_http_x_actor;
++            auth_request_set $mcp_actor_source $upstream_http_x_actor_source;
++            auth_request_set $mcp_actor_role $upstream_http_x_actor_role;
++            error_page 401 = @error401_readonly;
++            error_page 403 = @error403;
++
++            set $mcp_readonly_upstream mcp-hub-it-readonly:3000;
++            rewrite ^/mcp/it-readonly/(.*)$ /$1 break;
++            proxy_pass http://$mcp_readonly_upstream;
++            include /etc/nginx/mcp_proxy.conf;
++        }
++
+         location /mcp/admin/ {
+             if ($request_method = OPTIONS) {
+                 add_header Access-Control-Allow-Origin * always;
+@@ -140,6 +164,9 @@ http {
              }
  
              auth_request /_auth_admin;
@@ -134,7 +211,7 @@ index 03d0ded..9d74804 100644
              error_page 401 = @error401_admin;
              error_page 403 = @error403;
  
-@@ -160,6 +164,9 @@ http {
+@@ -160,6 +187,9 @@ http {
              }
  
              auth_request /_auth_accounting;
@@ -144,7 +221,7 @@ index 03d0ded..9d74804 100644
              error_page 401 = @error401_accounting;
              error_page 403 = @error403;
  
-@@ -172,24 +179,20 @@ http {
+@@ -172,24 +202,26 @@ http {
          # Internal RBAC helpers — keep `if` out of proxy locations except OPTIONS.
          location = /_auth_it {
              internal;
@@ -153,6 +230,12 @@ index 03d0ded..9d74804 100644
 -            if ($mcp_role = "admin") { return 200; }
 -            return 403;
 +            proxy_pass http://mcp_auth/verify/it;
++            include /etc/nginx/auth_request.conf;
++        }
++
++        location = /_auth_readonly {
++            internal;
++            proxy_pass http://mcp_auth/verify/readonly;
 +            include /etc/nginx/auth_request.conf;
          }
  
@@ -175,6 +258,21 @@ index 03d0ded..9d74804 100644
          }
  
          location @error401_it {
+@@ -200,6 +232,14 @@ http {
+             return 401 '{"error":"unauthorized","message":"Missing or invalid Authorization Bearer token"}';
+         }
+ 
++        location @error401_readonly {
++            default_type application/json;
++            add_header Access-Control-Allow-Origin * always;
++            add_header Access-Control-Expose-Headers "WWW-Authenticate, mcp-session-id" always;
++            add_header WWW-Authenticate 'Bearer realm="itops-mcp", resource_metadata="${PUBLIC_MCP_ORIGIN}/.well-known/oauth-protected-resource/mcp/it-readonly/mcp", scope="mcp:it"' always;
++            return 401 '{"error":"unauthorized","message":"Missing or invalid Authorization Bearer token"}';
++        }
++
+         location @error401_admin {
+             default_type application/json;
+             add_header Access-Control-Allow-Origin * always;
 diff --git a/package.json b/package.json
 index 84a9d45..edba673 100644
 --- a/package.json
@@ -195,3 +293,59 @@ index 84a9d45..edba673 100644
      "typecheck": "npm run build"
    },
    "engines": {
+diff --git a/packages/mcp-hub/src/index.ts b/packages/mcp-hub/src/index.ts
+index 141397a..2d1ab2a 100644
+--- a/packages/mcp-hub/src/index.ts
++++ b/packages/mcp-hub/src/index.ts
+@@ -2,6 +2,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+ import { log, optionalEnv, requireEnv, serveMcpHttp } from "@itops/mcp-common";
+ import { BackendMcpClient } from "./backend.js";
+ import { registerHubTools, type AccountingProduct, type HubBackends, type HubRole } from "./tools.js";
++import {
++  ACCOUNTING_READ_ONLY_TOOLS,
++  IT_READ_ONLY_TOOLS,
++  parseToolOverride,
++  withReadOnlyGuard,
++} from "./readonly.js";
+ 
+ const VERSION = "1.0.0";
+ 
+@@ -60,9 +66,22 @@ function createBackends(): HubBackends {
+ 
+ const backends = createBackends();
+ 
++const readOnly = optionalEnv("HUB_READ_ONLY", "false").toLowerCase() === "true";
++const readOnlyTools =
++  parseToolOverride(optionalEnv("HUB_READ_ONLY_TOOLS", "")) ??
++  (role === "accounting" ? ACCOUNTING_READ_ONLY_TOOLS : IT_READ_ONLY_TOOLS);
++
+ function createServer(): McpServer {
+   const server = new McpServer({ name, version: VERSION });
+-  registerHubTools(server, backends, role, accountingProduct, odooAllowWrite);
++  // The guard wraps registration, so a tool added to the hub later is denied on
++  // this route until it is put on the list — not allowed by default.
++  registerHubTools(
++    readOnly ? withReadOnlyGuard(server, readOnlyTools) : server,
++    backends,
++    role,
++    accountingProduct,
++    odooAllowWrite,
++  );
+   return server;
+ }
+ 
+@@ -80,6 +99,7 @@ log("info", "starting MCP hub", {
+   pstack: optionalEnv("PSTACK_MCP_URL"),
+   accountingProduct,
+   odooAllowWrite,
++  readOnly,
+   rag: optionalEnv("RAG_MCP_URL"),
+   publicBasePath: optionalEnv("MCP_PUBLIC_BASE_PATH"),
+ });
+@@ -89,4 +109,4 @@ serveMcpHttp(createServer, {
+   version: VERSION,
+   port,
+   publicBasePath: optionalEnv("MCP_PUBLIC_BASE_PATH"),
+-});
++});
+\ No newline at end of file

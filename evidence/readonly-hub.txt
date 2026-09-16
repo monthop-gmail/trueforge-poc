@@ -1,0 +1,46 @@
+# read-only enforcement ที่ upstream — ฝั่ง itops-mcp-hub
+# ทดสอบบน sandbox ท้องถิ่น ไม่มีโฮสต์จริงหรือ credential จริงในไฟล์นี้
+run-at: 2026-09-17T02:06:16+07:00
+
+== design ==
+route แยก /mcp/it-readonly/ -> hub instance ที่ตั้ง HUB_READ_ONLY=true
+deny-by-default ที่จุดลงทะเบียน tool (Proxy ครอบ server.tool) ครอบทุก backend พร้อมกัน
+credential แยก: VIEWER_TOKEN -> role viewer ซึ่ง mcp-auth อนุญาตเฉพาะ path readonly
+tool ที่ถูกปฏิเสธยังถูกลงทะเบียนไว้ แต่ handler ตอบปฏิเสธ และ schema ถูกแทนด้วย {}
+เพื่อให้คำตอบเป็น 'ไม่อนุญาต' เสมอ ไม่ใช่ 'อาร์กิวเมนต์ผิด' เมื่อขาดฟิลด์
+
+== 1. tools/call ไป write tools ตรง ๆ พร้อม arguments ที่ถูกต้อง ==
+rag_reindex              DENIED (upstream enforcement)
+rag_run_ocr              DENIED (upstream enforcement)
+rag_submit_ocr           DENIED (upstream enforcement)
+rag_review_ocr_job       DENIED (upstream enforcement)
+pstack_call_tool         DENIED (upstream enforcement)
+# ข้อความที่ได้: read-only route: tool "<name>" ไม่ได้รับอนุญาตบนเส้นทางนี้
+# เป็น error ของ hub เอง ไม่ใช่ของ gateway และไม่ใช่ 'unknown tool'
+
+== 2. read tools ยังทำงาน ==
+rag_get_status           OK
+zktime_get_status        OK
+rag_search               OK
+initialize + tools/list  OK (24 tools ลงทะเบียนครบ 19 เรียกได้ 5 ปฏิเสธ)
+
+== 3. ยกระดับสิทธิ์ไม่ได้ ==
+viewer -> /mcp/it                              403
+viewer -> /mcp/admin                           403
+viewer -> /mcp/accounting                      403
+viewer -> /mcp/it-readonly                     200
+viewer -> /mcp/it-readonly/../it/mcp           403
+viewer -> encoded traversal                    403
+ไม่มีโทเคน -> /mcp/it-readonly 401
+
+== 4. route เป็นขอบเขต ไม่ใช่โทเคน ==
+IT token (เขียนได้บนเส้นปกติ) -> rag_reindex บน read-only route : DENIED
+IT token                      -> rag_reindex บนเส้นปกติ        : ALLOWED (ระบบเดิมไม่พัง)
+
+== 5. คงอยู่หลัง restart ==
+restart mcp-hub-it-readonly แล้วเรียกซ้ำ: rag_reindex DENIED / rag_get_status OK
+
+== 6. regression ==
+scripts/smoke-test.sh : 26 passed / 4 failed
+# ทั้งสี่ที่ตกคือ ACCOUNTING -> 502 จาก sandbox ที่ตั้งใจไม่ยก mcp-hub-accounting ขึ้น
+# เท่าเดิมกับก่อนเปลี่ยน ไม่ถอยหลัง และไม่รายงานว่าผ่านครบ

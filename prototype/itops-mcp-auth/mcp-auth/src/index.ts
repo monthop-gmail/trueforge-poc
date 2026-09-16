@@ -10,7 +10,7 @@ function parsePrincipalRoles(raw: string): Record<string, HubRole> {
   }
   const out: Record<string, HubRole> = {};
   for (const [principal, role] of Object.entries(parsed)) {
-    if (role !== "it" && role !== "admin" && role !== "accounting") {
+    if (role !== "it" && role !== "admin" && role !== "accounting" && role !== "viewer") {
       throw new Error(`AUTH_JWT_PRINCIPAL_ROLES: ${principal} has invalid role ${String(role)}`);
     }
     out[principal] = role;
@@ -20,8 +20,8 @@ function parsePrincipalRoles(raw: string): Record<string, HubRole> {
 
 function parseDefaultRole(raw: string): HubRole | undefined {
   if (!raw) return undefined;
-  if (raw !== "it" && raw !== "admin" && raw !== "accounting") {
-    throw new Error(`AUTH_JWT_DEFAULT_ROLE must be it, admin or accounting, got ${raw}`);
+  if (raw !== "it" && raw !== "admin" && raw !== "accounting" && raw !== "viewer") {
+    throw new Error(`AUTH_JWT_DEFAULT_ROLE must be it, admin, accounting or viewer, got ${raw}`);
   }
   return raw;
 }
@@ -42,6 +42,8 @@ const app = createAuthApp({
     it: requireEnv("IT_TOKEN"),
     admin: requireEnv("ADMIN_TOKEN"),
     accounting: requireEnv("ACCOUNTING_TOKEN"),
+    // Optional: only deployments that expose the read-only route need it.
+    viewer: optionalEnv("VIEWER_TOKEN", "") || undefined,
   },
   verifier: jwksUrl
     ? new JwksVerifier({

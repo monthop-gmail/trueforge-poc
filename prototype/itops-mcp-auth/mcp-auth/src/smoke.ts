@@ -5,6 +5,7 @@ import { JwksVerifier } from "./jwks.js";
 const IT = "it-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const ADMIN = "admin-token-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const ACCOUNTING = "acct-token-cccccccccccccccccccccccccccccc";
+const VIEWER = "viewer-token-dddddddddddddddddddddddddddddd";
 const ISSUER = "https://gateway.example.test/oauth2/tenant/itops";
 const AUDIENCE = "https://gateway.example.test/tenant/mcp/itops/server";
 const KID = "smoke-key-1";
@@ -56,7 +57,7 @@ async function main(): Promise<void> {
   });
 
   const app = createAuthApp({
-    staticTokens: { it: IT, admin: ADMIN, accounting: ACCOUNTING },
+    staticTokens: { it: IT, admin: ADMIN, accounting: ACCOUNTING, viewer: VIEWER },
     verifier,
     principalRoles: { "alice@example.test": "it", "bob@example.test": "admin" },
   });
@@ -95,6 +96,14 @@ async function main(): Promise<void> {
   // The map this replaces let admin through on the IT path; keep that.
   await check("static admin on it", "it", ADMIN, 200, "token:admin");
   await check("static accounting on it", "it", ACCOUNTING, 403);
+
+  // A read-only credential must stay on the read-only route. This is the
+  // escalation check: viewer must never reach a write-capable path.
+  await check("viewer on readonly", "readonly", VIEWER, 200, "token:viewer");
+  await check("viewer on it", "it", VIEWER, 403);
+  await check("viewer on admin", "admin", VIEWER, 403);
+  await check("viewer on accounting", "accounting", VIEWER, 403);
+  await check("static IT on readonly", "readonly", IT, 200, "token:it");
 
   // The JWT path carries the caller's own identity instead of a shared one.
   await check("jwt alice on it", "it", sign(claims()), 200, "alice@example.test");
