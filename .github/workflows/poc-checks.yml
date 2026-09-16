@@ -1,0 +1,35 @@
+name: poc-checks
+
+# What CI can honestly check for this PoC: that the probe scripts are still valid
+# shell, and that the collaboration MCP's public OAuth discovery has not broken.
+# The Bearer and IT Ops legs need credentials and a local sandbox, so they run
+# from the runbook on a machine that has them — not here.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax-check the probe scripts
+        run: for f in scripts/*.sh; do bash -n "$f"; done
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck --severity=warning scripts/*.sh
+
+  collab-discovery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collaboration MCP OAuth discovery is still served
+        # No token: this exercises the discovery documents and the 401 challenge only.
+        # The origin lives in a repo secret, so this repository can be public without
+        # publishing the endpoint. Without the secret the probe skips and stays green.
+        env:
+          COLLAB_ORIGIN: ${{ secrets.COLLAB_ORIGIN }}
+        run: ./scripts/probe-oauth.sh

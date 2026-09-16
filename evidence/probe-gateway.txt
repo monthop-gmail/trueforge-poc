@@ -1,0 +1,23 @@
+# Hostnames and the tenant name were replaced with placeholders before this repository
+# was made public. Nothing else in this file was edited.
+== TRUEFOUNDRY GATEWAY PROBE ==
+run-at: 2026-09-16T23:04:32+07:00
+gateway: https://gateway.truefoundry.ai/<tenant>
+-- ai-collaboration-mcp
+PASS  ai-collaboration-mcp: initialize through the gateway (200)
+PASS  ai-collaboration-mcp: tools/list through the gateway (15 tools)
+PASS  ai-collaboration-mcp: tool list exposes no privileged shell tool
+PASS  ai-collaboration-mcp: read tool call through the gateway (get_workspace_context)
+NOTE  ai-collaboration-mcp: identity seen upstream: monthop-gmail/trueforge
+PASS  ai-collaboration-mcp: gateway rejects a missing PAT (401)
+PASS  ai-collaboration-mcp: gateway rejects a wrong PAT (401)
+-- <itops-connector>
+PASS  <itops-connector>: initialize through the gateway (200)
+PASS  <itops-connector>: tools/list through the gateway (24 tools)
+PASS  <itops-connector>: tool list exposes no privileged shell tool
+PASS  <itops-connector>: read tool call through the gateway (rag_get_status)
+NOTE  <itops-connector>: rag backend=fixture sample=true
+PASS  <itops-connector>: gateway rejects a missing PAT (401)
+PASS  <itops-connector>: gateway rejects a wrong PAT (401)
+
+Summary: 12 passed, 0 failed, 0 skipped

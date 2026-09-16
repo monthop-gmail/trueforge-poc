@@ -1,0 +1,10 @@
+# Upstream checkouts pinned by SHA in docs/poc/dual-mcp-overview.md — not vendored into git.
+vendor/
+# Local TrueForge standalone state (SQLite DB, OAuth client records).
+.local/
+# Every env file is a credential holder except the template.
+.env
+.env.*
+!.env.example
+# Holds the live collaboration endpoint; publish .mcp.json.example instead.
+.mcp.json

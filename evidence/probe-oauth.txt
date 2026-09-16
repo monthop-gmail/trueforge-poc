@@ -1,0 +1,29 @@
+# Hostnames and the tenant name were replaced with placeholders before this repository
+# was made public. Nothing else in this file was edited.
+== DUAL MCP OAUTH PROBE ==
+run-at: 2026-09-16T22:02:58+07:00
+-- collab: https://<collab-host>
+PASS  collab authorization-server metadata
+NOTE  collab {"registration_endpoint":"https://<collab-host>/register","grant_types_supported":["authorization_code","refresh_token"],"code_challenge_methods_supported":["S256"],"token_endpoint_auth_methods_supported":["client_secret_basic","client_secret_post","none"]}
+PASS  collab protected-resource metadata (200)
+PASS  collab unauthenticated MCP call returns a WWW-Authenticate challenge
+NOTE  collab challenge: Bearer realm="OAuth", resource_metadata="https://<collab-host>/.well-known/oauth-protected-resource/mcp"
+-- itops: http://127.0.0.1:19080
+PASS  itops authorization-server metadata
+NOTE  itops {"registration_endpoint":"http://127.0.0.1:19080/register","grant_types_supported":["authorization_code","refresh_token"],"code_challenge_methods_supported":["S256"],"token_endpoint_auth_methods_supported":["none","client_secret_post","client_secret_basic"]}
+PASS  itops protected-resource metadata (200)
+PASS  itops unauthenticated MCP call returns a WWW-Authenticate challenge
+NOTE  itops challenge: Bearer realm="itops-mcp", resource_metadata="http://127.0.0.1:19080/.well-known/oauth-protected-resource/mcp/it/mcp", scope="mcp:it"
+-- itops authorization-code + PKCE flow
+PASS  itops dynamic client registration (DCR)
+NOTE  itops registered client_name=trueforge-poc-probe auth_method=none
+PASS  itops /authorize granted a code
+PASS  itops token exchange returned an access_token
+NOTE  itops token response: {"token_type":"Bearer","expires_in":28800,"scope":"mcp:it","has_refresh":true}
+PASS  itops rejects a replayed code / wrong PKCE verifier
+NOTE  itops OAuth access_token IS the shared IT role token (same sha256 prefix 740f554eba6b) — per-client revocation is not possible
+PASS  itops OAuth access_token works on the IT MCP endpoint (200)
+PASS  itops OAuth IT access_token denied at /mcp/admin (403)
+PASS  itops refresh_token grant returned a new access_token
+
+Summary: 13 passed, 0 failed, 0 skipped

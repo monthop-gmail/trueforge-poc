@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "ai-collab": {
+      "type": "http",
+      "url": "https://<collab-host>/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_AUTH_TOKEN}",
+        "X-Client-Name": "monthop-gmail/trueforge"
+      }
+    }
+  }
+}

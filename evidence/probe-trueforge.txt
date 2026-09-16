@@ -1,0 +1,18 @@
+# Hostnames and the tenant name were replaced with placeholders before this repository
+# was made public. Nothing else in this file was edited.
+== TRUEFORGE HARNESS PROBE ==
+run-at: 2026-09-16T22:02:59+07:00
+PASS  TrueForge /healthz 200 at http://localhost:8790
+PASS  collab connector registered (HTTP 200)
+PASS  TrueForge listed 15 tools from collab
+PASS  itops IT connector registered (HTTP 200)
+PASS  TrueForge listed 24 tools from itops IT
+PASS  TrueForge surfaces the hub's 403 for the IT token on the admin path
+PASS  itops OAuth connector registered (HTTP 200)
+PASS  TrueForge ran DCR against the hub and built an authorize URL
+NOTE  TrueForge authorize params: code_challenge_method=S256 redirect_uri=http://localhost:8790/api/v1/mcp-servers/oauth/callback
+PASS  hub consent step redirected back to the TrueForge callback
+PASS  TrueForge callback completed the token exchange
+PASS  TrueForge listed 24 tools from itops IT over the OAuth connector
+
+Summary: 11 passed, 0 failed, 0 skipped

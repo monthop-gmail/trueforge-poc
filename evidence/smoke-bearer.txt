@@ -1,0 +1,26 @@
+# Hostnames and the tenant name were replaced with placeholders before this repository
+# was made public. Nothing else in this file was edited.
+== DUAL MCP DIRECT-BEARER SMOKE ==
+run-at: 2026-09-16T22:02:50+07:00
+-- collaboration: https://<collab-host>/mcp
+PASS  collab rejects missing token (401)
+PASS  collab rejects wrong token (401)
+PASS  collab initialize + tools/list (15 tools)
+PASS  collab exposes get_workspace_context
+PASS  collab read tool call returned identity: you_are=monthop-gmail/trueforge
+PASS  collab identity matches expected team identity
+NOTE  collab identity with declared name: monthop-gmail/trueforge
+NOTE  collab identity with no name header: Claude Code
+NOTE  collab identity with an invented name: poc-identity-probe
+NOTE  collab identity is client-asserted: one token can present any name
+-- itops: http://127.0.0.1:19080
+PASS  itops /healthz 200
+PASS  itops IT path rejects missing token (401)
+PASS  itops IT path rejects wrong token (401)
+PASS  itops IT token denied at /mcp/admin (403)
+PASS  itops IT token denied at /mcp/accounting (403)
+PASS  itops IT initialize + tools/list (24 tools)
+PASS  itops IT tool list exposes no privileged shell tool
+PASS  itops IT read tool call succeeded: zabbix_get_active_problems
+
+Summary: 14 passed, 0 failed, 0 skipped
