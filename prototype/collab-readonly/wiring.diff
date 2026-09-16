@@ -18,7 +18,7 @@ index 8b15b3d..28cd7ae 100644
     * แก้ชื่อที่แสดง เมื่อชื่อที่ค่ายส่งมาตอน DCR ไม่ตรงกับชื่อที่คนเรียกกัน
     * รูปแบบ `ชื่อที่ส่งมา=ชื่อที่จะแสดง` คั่นด้วย comma เช่น `Google=Gemini`
 diff --git a/src/index.ts b/src/index.ts
-index f2582c8..312acd6 100644
+index f2582c8..9bb30af 100644
 --- a/src/index.ts
 +++ b/src/index.ts
 @@ -6,10 +6,20 @@ import { oauthDefaultHandler, type OAuthEnv } from "./oauth";
@@ -102,10 +102,55 @@ index f2582c8..312acd6 100644
    },
  };
  
-@@ -99,6 +120,16 @@ const mcpApiHandler = {
+@@ -99,6 +120,61 @@ const mcpApiHandler = {
   * รหัสร่วมตรง ๆ ส่วน AI chat บนคลาวด์ทำไม่ได้ ต้องผ่าน OAuth ทั้งสองทางไปจบที่
   * handler เดียวกัน แต่ **ได้ตัวตนคนละแบบ** — ทางแรกไม่มี identity จาก DCR ให้อ่าน
   */
++/**
++ * บันทึกการใช้งานของเส้นอ่านอย่างเดียวเท่าที่ตอบคำถามว่า "หก tool พอไหม"
++ *
++ * เก็บ: ชื่อ tool ที่ถูกเรียก, ผลว่าผ่านหรือถูกปฏิเสธ, เวลาที่ใช้
++ * ไม่เก็บ: argument, เนื้อหา, โทเค็น, ตัวตนของผู้ใช้ และไม่แตะคำขอของเส้นปกติ
++ *
++ * อ่านชื่อ tool จาก body ซึ่งเป็น JSON-RPC อยู่แล้ว โดย clone request ก่อนเสมอ
++ * เพราะ body อ่านได้ครั้งเดียว ถ้าอ่านตรง ๆ handler จะได้ body เปล่า
++ */
++async function servePilotRoute(
++  request: Request,
++  env: OAuthEnv,
++  ctx: ExecutionContext,
++): Promise<Response> {
++  let method: string | undefined;
++  let tool: string | undefined;
++  try {
++    const body = (await request.clone().json()) as {
++      method?: unknown;
++      params?: { name?: unknown };
++    };
++    method = typeof body.method === "string" ? body.method : undefined;
++    tool = typeof body.params?.name === "string" ? body.params.name : undefined;
++  } catch {
++    // คำขอที่ไม่ใช่ JSON ไม่ต้องบันทึกอะไร ปล่อยให้ handler จัดการต่อ
++  }
++
++  const started = Date.now();
++  const response = await serveMcp(request, env, ctx, true);
++
++  if (method === "tools/call" || method === "tools/list") {
++    console.log(
++      JSON.stringify({
++        at: new Date().toISOString(),
++        event: "pilot_call",
++        method,
++        tool,
++        status: response.status,
++        ms: Date.now() - started,
++      }),
++    );
++  }
++  return response;
++}
++
 +/**
 + * รหัสของเส้นอ่านอย่างเดียว อยู่คนละรายการกับรหัสปกติโดยตั้งใจ ใบที่อยู่ในรายการนี้
 + * เข้าเส้นปกติไม่ได้ และใบของเส้นปกติก็เข้าเส้นนี้ไม่ได้
@@ -119,7 +164,7 @@ index f2582c8..312acd6 100644
  async function hasStaticBearer(request: Request, env: Env): Promise<boolean> {
    const token = bearerToken(request);
    if (!token) return false;
-@@ -152,6 +183,19 @@ export default {
+@@ -152,6 +228,19 @@ export default {
        }
      }
  
@@ -127,7 +172,7 @@ index f2582c8..312acd6 100644
 +      // เส้นนี้ไม่ผูกกับ OAuth provider จึงต้องตอบ 401 เองเมื่อรหัสไม่ผ่าน แทนที่จะ
 +      // ตกไปให้ provider ซึ่งจะพาไปหา flow ของเส้นปกติ
 +      if (await hasReadOnlyBearer(request, env)) {
-+        return serveMcp(request, env, ctx, true);
++        return servePilotRoute(request, env, ctx);
 +      }
 +      return json(
 +        { error: "unauthorized", detail: "read-only route requires a token from MCP_READONLY_TOKENS" },
@@ -345,3 +390,39 @@ index 0000000..2dbd03a
 +    expect(roNames.length).toBeLessThan(rwNames.length);
 +  });
 +});
+diff --git a/wrangler.poc.jsonc b/wrangler.poc.jsonc
+new file mode 100644
+index 0000000..b563350
+--- /dev/null
++++ b/wrangler.poc.jsonc
+@@ -0,0 +1,30 @@
++// Config ของ deployment ทดสอบเท่านั้น — ชื่อ Worker, ฐาน D1 และ KV ของ OAuth
++// แยกจากของจริงทั้งหมด เพื่อไม่ให้ grant/token/ข้อมูลของสองฝั่งปนกัน
++// สร้างตาม dis-bc779b20 seq 23 · ลบทิ้งเมื่อจบรอบตาม docs/poc/collab-test-deployment.md
++{
++  "$schema": "node_modules/wrangler/config-schema.json",
++  "name": "ai-collaboration-mcp-poc",
++  "main": "src/index.ts",
++  "compatibility_date": "2026-08-21",
++  "observability": {
++    "enabled": true
++  },
++  "workers_dev": true,
++  "preview_urls": false,
++  "vars": {
++    "CLIENT_NAME_ALIASES": "Google=Gemini"
++  },
++  "kv_namespaces": [
++    {
++      "binding": "OAUTH_KV",
++      "id": "9ad46a74ee5b4a1a88e8c230aa11d2d7"
++    }
++  ],
++  "d1_databases": [
++    {
++      "binding": "DB",
++      "database_name": "ai-collab-poc",
++      "database_id": "d3ea7845-ee84-46a3-a8a5-0e83828abc2e"
++    }
++  ]
++}
