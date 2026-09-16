@@ -14,6 +14,7 @@ TrueFoundry แผน Developer แบบฟรี ทำให้ปิดเ�
 | **Bearer ผ่าน gateway** (credential แบบ header ที่ connector) | **PASS** | `probe-gateway.sh` 12/0 — ทั้งสอง server บน tenant จริง |
 | **OAuth ผ่าน gateway** | **BLOCKED** | gateway ไม่ส่ง PKCE และโฮสต์ redirect ของมันไม่อยู่ใน allowlist ของฮับ — ดูข้อค้นพบ 6 |
 | **Authorization ของ gateway** (ผู้ที่ควรถูกปฏิเสธ) | **PASS** | `evidence/gateway-authorization.txt` — ข้อค้นพบ 9 |
+| **cloud-chat read-only pilot** (dec-32f127cf) | **PASS** | `evidence/cloud-chat-pilot.txt` — รวมการต่อจากไคลเอนต์จริง |
 | **การกรอง tool ราย tool บน Virtual MCP** | **FAIL** | manifest เก็บ subset ไว้แต่ไม่ถูกบังคับใช้ — ข้อค้นพบ 10 |
 
 ## Acceptance criteria
@@ -176,6 +177,29 @@ nginx ฝั่งฮับ (`This token cannot access this MCP path`) จึง
 ผู้เรียกได้คำปฏิเสธที่ระบุชื่อ tool แต่ฝั่ง server ยังไม่มีบรรทัด log ต่อการเรียกที่ถูกปฏิเสธหนึ่งครั้ง
 การเพิ่มต้องมี hook ที่ชั้น HTTP ซึ่งอยู่ใน `mcp-common` ที่ทุกบริการในฮับใช้ร่วมกัน จึงไม่ทำใน
 รอบนี้เพื่อไม่ขยาย blast radius (ตกลงกันไว้ใน dis-bc779b20 seq 22) — บันทึกเป็น follow-up
+
+### 12. id ของ workspace ไม่ใช่ตัวชี้ deployment
+
+ไคลเอนต์แชทที่ต่อเข้า pilot รายงาน workspace เป็น `ws-001` ซึ่งเป็น id เดียวกับโต๊ะจริง
+ตรวจแล้วเป็นคนละฐาน: ฐานทดสอบชื่อ `Workspace #001` มี participants 0 และ discussion เดียว
+ส่วนโต๊ะจริงชื่อ `งานจริงของทีม` มี participants 23 และ discussion 26 · สาเหตุคือ `schema.sql`
+seed workspace ตั้งต้นด้วย id เดียวกันทุก deployment
+
+ผลที่ตามมา: **ห้ามใช้ workspace id เดี่ยว ๆ เป็นตัวชี้ขอบเขตความปลอดภัย** และเกณฑ์หยุดที่เคย
+เขียนว่า "ห้ามถึง ws-001" ถูกแก้ถ้อยคำเป็น "ห้ามถึง deployment/host/D1/KV ของ workspace จริง"
+แล้วใน `collab-test-deployment.md`
+
+**follow-up ที่ยังไม่ทำ** — ให้ server คืนตัวชี้ deployment ที่ไม่ใช่ความลับ เช่น environment
+label หรือ issuer/origin ที่ sanitize แล้ว เพื่อให้ไคลเอนต์แยก test กับ production ได้ทันที
+โดยไม่ต้องจำชื่อ workspace ของแต่ละฐาน · ยังเป็นแค่ข้อเสนอ ยังไม่มี patch และยังไม่อนุมัติให้
+แตะ production
+
+### 13. ตัวตนที่ไคลเอนต์เห็นคือป้ายของ credential ไม่ใช่ของคน
+
+ไคลเอนต์แชทที่ต่อผ่าน gateway เห็น identity เป็น `Static bearer` — ป้ายเดียวกันหมดไม่ว่าผู้ใช้
+จะเป็นใคร เพราะ connector ถือ credential ที่ใช้ร่วมกัน · เป็นหลักฐานตรงที่สุดของข้อจำกัดที่
+กำกับไว้ทุกครั้ง และเป็นเหตุผลที่ยังไม่ขยายจำนวนผู้ใช้จนกว่าเรื่อง identity delegation
+(ข้อค้นพบก่อนหน้า) จะมีคำตอบ
 
 ## Go / No-go สำหรับรอบ 3
 
