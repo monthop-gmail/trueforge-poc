@@ -1,0 +1,61 @@
+# หลักฐาน token identity ของขาออก gateway (โหมด passthrough)
+# เก็บตาม dis-bc779b20 seq 28 · ใช้เฉพาะ resource ทดสอบ · ไม่มีโทเคนหรือความลับในไฟล์นี้
+# ค่าที่บันทึกเป็น metadata ที่ derive แล้วเท่านั้น และ sub ถูกตัดให้เหลือบางส่วน
+run-at: 2026-09-17
+
+== วิธีเก็บ ==
+1. DCR กับ authorization server ของ connector ทดสอบ แล้วสร้าง authorize URL พร้อม PKCE S256
+2. เจ้าของงานกด consent ในเบราว์เซอร์ด้วยบัญชีของตนเอง แล้วส่ง code + state กลับมา
+3. ทีมแลก code เป็นโทเคน (client_secret_post + code_verifier) ถือไว้ในหน่วยความจำ
+4. ยิงหนึ่งคำขอผ่าน gateway ไปยัง connector แบบ passthrough ที่ชี้มาที่ endpoint สังเกตการณ์
+   ของ Worker ทดสอบ ซึ่งคืนเฉพาะ metadata
+5. ลบ connector และ endpoint ชั่วคราวทันที แล้วลบไฟล์ที่เคยถือโทเคนแบบ shred
+
+state ที่กลับมาตรงกับที่ส่งไป · code ใช้ครั้งเดียวและไม่มีค่าถ้าไม่มี verifier
+
+== ผล A — PAT (เทียบไว้เป็นฐาน) ==
+token_kind : opaque
+length     : 64
+# ไม่มี claim ให้ตรวจ ไม่มี iss/aud/sub ยืนยันว่า verifier แบบ JWT-only ครอบไม่ถึง credential ชนิดนี้
+
+== ผล B — โทเคนที่ได้จาก OAuth consent ==
+token_kind      : jwt (RS256, มี kid)
+length          : 966
+token_type      : Bearer
+expires_in      : 3600 วินาที
+refresh_token   : มี
+scope           : ไม่มีในคำตอบของ token endpoint
+iss             : truefoundry.com
+aud             : ค่าเดียว รูปแบบคล้าย UUID ซึ่งถอดจากเลขฐานสิบหกได้เป็น "<tenant>:<รหัสสั้น>"
+sub             : รหัสผู้ใช้ภายใน (ตัดแสดงบางส่วน) เสถียร ใช้เป็น key ได้
+claim names     : applicationId, aud, email, exp, iat, iss, jti, jwtOwner, roles,
+                  sub, subjectSlug, subjectType, tenantName, userType
+# มี email อยู่ในโทเคน แต่ใช้เป็นข้อมูลประกอบเท่านั้น ตัวระบุหลักคือ iss + sub
+
+== ผล C — สิ่งที่ upstream ได้รับจริงในโหมด passthrough ==
+เหมือนผล B ทุกฟิลด์ที่ตรวจได้ ทั้ง kind, length 966, alg, kid, iss, aud, sub, exp
+สรุป: gateway ส่งโทเคนของผู้เรียก "ตามเดิม" ไปให้ upstream ไม่ได้แลกหรือออกใบใหม่
+
+== ข้อสรุปเรื่อง audience binding ==
+aud ของโทเคนชี้ไปที่ tenant/application ของ gateway ไม่ใช่ทรัพยากรของ upstream
+และเป็นค่าเดียวกันไม่ว่าจะเรียก MCP server ตัวใดใน tenant
+
+ผลที่ตามมา ถ้า upstream ตั้งให้ยอมรับ audience นี้:
+  - โทเคนที่ออกให้ระบบใดก็ได้ใน tenant เดียวกัน จะใช้กับ upstream นี้ได้ทันที
+  - audience จึงไม่ได้ทำหน้าที่ผูกโทเคนกับปลายทาง ซึ่งเป็นเหตุผลเดียวที่ audience มีอยู่
+ดังนั้น **ไม่ตั้งค่าให้ upstream ยอมรับ audience ของ gateway** ตามที่ตกลงไว้
+
+== ข้อเสนอทางถัดไป ==
+ทางที่ถูกคือให้โทเคนที่ upstream เห็น มี audience ของ upstream เอง ซึ่งทำได้สองแบบ
+  ก. token exchange (RFC 8693) ที่ gateway แลกโทเคนของผู้เรียกเป็นโทเคนสำหรับปลายทาง
+  ข. ให้ upstream เป็นผู้ออกโทเคนเอง แล้ว gateway ใช้ outbound OAuth ต่อ upstream
+ทั้งสองแบบต้องพิสูจน์ว่า gateway รองรับจริงก่อน ไม่ใช่เดาจากการที่ API ยอมรับฟิลด์
+สิ่งที่ passthrough ให้ได้ในวันนี้คือ "ตัวตนของผู้เรียกที่ตรวจสอบได้" (iss + sub + roles)
+แต่ยังไม่ใช่ "โทเคนที่ผูกกับปลายทาง"
+
+== teardown ที่ทำแล้ว ==
+ลบ connector poc-passthrough-probe : HTTP 200 · connector คงเหลือสามตัวตามเดิม
+ลบ secret ที่เปิด endpoint ชั่วคราว : สำเร็จ
+ถอดโค้ด endpoint ออกจาก branch และ deploy ซ้ำ : endpoint และ callback ตอบ 404 ทั้งคู่
+เส้นทาง /mcp-readonly ของ deployment ทดสอบ : ยังทำงาน 200
+ไฟล์ชั่วคราวที่เคยถือโทเคนและ verifier : ลบแบบ shred แล้ว เหลือ 0 ไฟล์
