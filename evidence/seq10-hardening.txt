@@ -1,0 +1,50 @@
+# เกณฑ์เพิ่มเติมจาก dis-bc779b20 seq 10 — รันบน sandbox ท้องถิ่น
+# โทเคนเซ็นด้วยคีย์ทดสอบในเครื่อง ไม่มีโฮสต์จริงหรือ credential จริงเกี่ยวข้อง
+run-at: 2026-09-17T00:57:52+07:00
+
+== 1. HEADER SPOOFING — ค่าที่ upstream ได้รับจริง ==
+# วัดด้วยการสลับ mcp-hub-it เป็น echo server ชั่วคราว แล้วสลับกลับ
+static IT, ไม่ส่ง header เอง         actor=token:it            source=static  role=it
+static IT + ส่ง X-Actor: attacker    actor=token:it            source=static  role=it
+JWT alice + ส่ง X-Actor: attacker    actor=alice@example.test  source=jwt     role=it
+static IT + ส่ง X-Actor-Source: jwt  source=static
+static IT + ส่ง X-MCP-Role: admin    role=it
+# ค่าที่ caller ส่งมาเองถูกทับทุกกรณี upstream เห็นเฉพาะค่าที่ verifier ออกให้
+
+== 2. BYPASS ATTEMPTS — ไม่มี credential ต้องไม่ถึง upstream ==
+/mcp/it/mcp                  401
+/mcp/it (exact)              308  308 ไปยัง path ที่มี auth
+//mcp/it/mcp                 401
+/mcp/it/../it/mcp            401
+/mcp/it/%2e%2e/it/mcp        401
+/mcp/./it/mcp                401
+/MCP/IT/mcp                  405  405 ไม่เข้าเส้น proxy
+/_auth_it (internal)         404  404 internal only
+/mcp/admin/mcp               401
+# ไม่มีเส้นไหนถึง upstream ได้โดยไม่มี credential
+
+== 3. INVALID JWT ต้องไม่ fallback ไปเส้น static ==
+ลายเซ็นพัง                   401
+ไม่มีส่วนลายเซ็น             401
+alg=none                     401
+static IT (control)          200
+JWT ที่ถูกต้อง (control)     200
+
+== 4. AUDIT — ระบุตัวคนได้ทั้งที่ผ่านและที่ถูกปฏิเสธ โดยไม่มีโทเคนใน log ==
+172.24.0.1 jwt:alice@example.test POST /mcp HTTP/1.1 200 188 rt=0.011
+172.24.0.1 jwt-denied:alice@example.test POST /mcp HTTP/1.1 403 72 rt=0.002
+172.24.0.1 jwt-denied:carol@example.test POST /mcp HTTP/1.1 403 72 rt=0.002
+172.24.0.1 static-denied:token:it POST /mcp HTTP/1.1 403 72 rt=0.001
+172.24.0.1 static:token:it POST /mcp HTTP/1.1 200 188 rt=0.011
+
+# จำนวนครั้งที่พบ credential ใน log ของ nginx และ mcp-auth รวมกัน
+IT_TOKEN                 0
+ADMIN_TOKEN              0
+ACCOUNTING_TOKEN         0
+JWT ทั้งสตริง 0
+ส่วนลายเซ็นของ JWT 0
+
+== 5. REGRESSION ของฮับหลังเปลี่ยน ==
+scripts/smoke-test.sh : 26 passed / 4 failed
+# ทั้งสี่ที่ตกคือ ACCOUNTING -> 502 จากการที่ sandbox ตั้งใจไม่ยก mcp-hub-accounting ขึ้น
+# ไม่ใช่ regression และไม่รายงานว่าผ่านครบ

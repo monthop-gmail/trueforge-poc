@@ -1,6 +1,6 @@
 import express, { type Request, type Response } from "express";
 import { log } from "@itops/mcp-common";
-import { JwksVerifier, JwtVerificationError } from "./jwks.js";
+import { JwksUnavailableError, JwksVerifier, JwtVerificationError } from "./jwks.js";
 
 export type HubRole = "it" | "admin" | "accounting";
 
@@ -84,6 +84,9 @@ async function handleVerify(config: AuthConfig, req: Request, res: Response): Pr
   const fromStatic = staticRole(config, token);
   if (fromStatic) {
     if (!ALLOWED_ROLES[requested].includes(fromStatic)) {
+      log("warn", "auth denied: static role cannot use this path", { role: fromStatic, requested });
+      res.setHeader("X-Actor", `token:${fromStatic}`);
+      res.setHeader("X-Actor-Source", "static-denied");
       res.status(403).end();
       return;
     }
@@ -104,11 +107,16 @@ async function handleVerify(config: AuthConfig, req: Request, res: Response): Pr
     const role = config.principalRoles[verified.subject] ?? config.defaultRole;
     if (!role) {
       log("warn", "auth denied: verified principal has no role", { subject: verified.subject });
+      res.setHeader("X-Actor", verified.subject);
+      res.setHeader("X-Actor-Source", "jwt-denied");
       res.status(403).end();
       return;
     }
     if (!ALLOWED_ROLES[requested].includes(role)) {
       log("warn", "auth denied: role mismatch", { subject: verified.subject, role, requested });
+      res.setHeader("X-Actor", verified.subject);
+      res.setHeader("X-Actor-Source", "jwt-denied");
+      res.setHeader("X-Actor-Role", role);
       res.status(403).end();
       return;
     }
@@ -119,13 +127,18 @@ async function handleVerify(config: AuthConfig, req: Request, res: Response): Pr
     res.setHeader("X-Actor-Role", role);
     res.status(200).end();
   } catch (error) {
+    // An unreachable keyset is an outage on our side, not a failed credential;
+    // answering 401 here would look like the caller's token went bad.
+    if (error instanceof JwksUnavailableError) {
+      log("error", "auth unavailable: keyset could not be read", { reason: error.reason });
+      res.status(503).end();
+      return;
+    }
     if (error instanceof JwtVerificationError) {
       log("warn", "auth denied: token rejected", { reason: error.reason });
       res.status(401).end();
       return;
     }
-    // An unreachable JWKS is an outage on our side, not a failed credential;
-    // answering 401 here would look like the caller's token went bad.
     log("error", "auth verifier failed", { message: error instanceof Error ? error.message : String(error) });
     res.status(503).end();
   }

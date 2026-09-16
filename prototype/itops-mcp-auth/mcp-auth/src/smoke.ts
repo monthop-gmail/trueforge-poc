@@ -1,4 +1,4 @@
-import { createSign, generateKeyPairSync } from "node:crypto";
+import { createSign, generateKeyPairSync, type KeyObject } from "node:crypto";
 import { createAuthApp } from "./app.js";
 import { JwksVerifier } from "./jwks.js";
 
@@ -22,15 +22,28 @@ function sign(claims: Record<string, unknown>, kid = KID): string {
   return `${header}.${payload}.${signer.sign(privateKey).toString("base64url")}`;
 }
 
+function signWith(key: KeyObject, payloadClaims: Record<string, unknown>, kid: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT", kid })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify(payloadClaims)).toString("base64url");
+  const signer = createSign("RSA-SHA256");
+  signer.update(`${header}.${payload}`);
+  return `${header}.${payload}.${signer.sign(key).toString("base64url")}`;
+}
+
 function claims(extra: Record<string, unknown> = {}): Record<string, unknown> {
   const now = Math.floor(Date.now() / 1000);
   return { iss: ISSUER, aud: AUDIENCE, sub: "user-1", email: "alice@example.test", iat: now, exp: now + 300, ...extra };
 }
 
 let jwksFetches = 0;
+let jwksKeys = [jwk];
+let jwksDown = false;
 const fetchImpl = (async () => {
   jwksFetches += 1;
-  return new Response(JSON.stringify({ keys: [jwk] }), { headers: { "content-type": "application/json" } });
+  if (jwksDown) {
+    return new Response("upstream down", { status: 503 });
+  }
+  return new Response(JSON.stringify({ keys: jwksKeys }), { headers: { "content-type": "application/json" } });
 }) as unknown as typeof fetch;
 
 async function main(): Promise<void> {
@@ -103,7 +116,42 @@ async function main(): Promise<void> {
   if (jwksFetches > 2) {
     throw new Error(`JWKS refetched ${jwksFetches} times; the cooldown is not holding`);
   }
-  console.log(`ok   jwks fetched ${jwksFetches} time(s) across ${15} checks`);
+  console.log(`ok   jwks fetched ${jwksFetches} time(s) across the checks above`);
+
+  // --- cooldown ------------------------------------------------------------
+  // Several tokens carrying an unknown kid must not pull the keyset once each.
+  const before = jwksFetches;
+  for (let i = 0; i < 5; i += 1) {
+    await check(`cooldown burst ${i + 1}`, "it", sign(claims(), `missing-kid-${i}`), 401);
+  }
+  if (jwksFetches !== before) {
+    throw new Error(`cooldown broken: ${jwksFetches - before} extra fetches for 5 unknown-kid tokens`);
+  }
+  console.log(`ok   cooldown held: 5 unknown-kid tokens caused 0 extra JWKS fetches`);
+
+  // --- rotation ------------------------------------------------------------
+  // A key added after the cooldown window must be picked up on the next miss,
+  // and tokens signed by the old key must keep working.
+  const rotated = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const ROTATED_KID = "smoke-key-2";
+  const rotatedJwk = { ...(rotated.publicKey.export({ format: "jwk" }) as Record<string, unknown>), kid: ROTATED_KID, alg: "RS256", use: "sig" };
+  jwksKeys = [jwk, rotatedJwk];
+  await check("rotation: new kid before refresh window", "it", signWith(rotated.privateKey, claims(), ROTATED_KID), 401);
+  verifier.forceRefreshWindow();
+  await check("rotation: new kid after refresh window", "it", signWith(rotated.privateKey, claims(), ROTATED_KID), 200, "alice@example.test");
+  await check("rotation: old kid still valid", "it", sign(claims()), 200, "alice@example.test");
+  console.log("ok   rotation picked up the new key without dropping the old one");
+
+  // --- outage --------------------------------------------------------------
+  // A JWKS that cannot be fetched is our outage, not a bad credential: 503, so a
+  // caller is not told their token went wrong, and static callers are untouched.
+  jwksDown = true;
+  verifier.forceRefreshWindow();
+  await check("outage: unknown kid while JWKS is down", "it", sign(claims(), "kid-during-outage"), 503);
+  await check("outage: cached key still verifies", "it", sign(claims()), 200, "alice@example.test");
+  await check("outage: static credential unaffected", "it", IT, 200, "token:it");
+  jwksDown = false;
+  console.log("ok   JWKS outage answered 503 and left cached and static callers working");
 
   server.close();
   console.log("auth smoke ok");

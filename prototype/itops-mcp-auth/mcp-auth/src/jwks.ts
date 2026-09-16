@@ -25,6 +25,21 @@ export interface VerifiedToken {
   claims: Record<string, unknown>;
 }
 
+/**
+ * The keyset could not be read. Separate from JwtVerificationError on purpose:
+ * this is our outage, and answering it as a rejected credential would tell the
+ * caller their token went bad.
+ */
+export class JwksUnavailableError extends Error {
+  constructor(
+    message: string,
+    readonly reason: string,
+  ) {
+    super(message);
+    this.name = "JwksUnavailableError";
+  }
+}
+
 export class JwtVerificationError extends Error {
   constructor(
     message: string,
@@ -141,15 +156,23 @@ export class JwksVerifier {
 
   async #refresh(now: number): Promise<void> {
     this.#lastRefresh = now;
-    const response = await this.#options.fetchImpl(this.#options.jwksUrl, {
-      headers: { accept: "application/json" },
-    });
+    let response: Response;
+    try {
+      response = await this.#options.fetchImpl(this.#options.jwksUrl, {
+        headers: { accept: "application/json" },
+      });
+    } catch (error) {
+      throw new JwksUnavailableError(
+        `JWKS fetch failed: ${error instanceof Error ? error.message : String(error)}`,
+        "jwks_unreachable",
+      );
+    }
     if (!response.ok) {
-      throw new JwtVerificationError(`JWKS fetch failed with HTTP ${response.status}`, "jwks_unavailable");
+      throw new JwksUnavailableError(`JWKS fetch failed with HTTP ${response.status}`, "jwks_http_error");
     }
     const body = (await response.json()) as { keys?: unknown };
     if (!Array.isArray(body.keys)) {
-      throw new JwtVerificationError("JWKS has no keys array", "jwks_malformed");
+      throw new JwksUnavailableError("JWKS has no keys array", "jwks_malformed");
     }
     for (const entry of body.keys) {
       if (typeof entry !== "object" || entry === null) continue;
@@ -167,5 +190,13 @@ export class JwksVerifier {
   /** Cached key count — exposed for the smoke test and for health output. */
   get cachedKeyCount(): number {
     return this.#keys.size;
+  }
+
+  /**
+   * Ends the refresh cooldown now. Only the smoke test uses this: real rotation
+   * is handled by the cooldown expiring on its own.
+   */
+  forceRefreshWindow(): void {
+    this.#lastRefresh = 0;
   }
 }
