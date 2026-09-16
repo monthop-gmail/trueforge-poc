@@ -13,7 +13,8 @@ TrueFoundry แผน Developer แบบฟรี ทำให้ปิดเ�
 | **OAuth ทางตรง** — Collaboration | **NOT RUN** | discovery ผ่าน แต่ DCR จะไปลงทะเบียน client บน Worker production ที่ใช้ร่วมกัน |
 | **Bearer ผ่าน gateway** (credential แบบ header ที่ connector) | **PASS** | `probe-gateway.sh` 12/0 — ทั้งสอง server บน tenant จริง |
 | **OAuth ผ่าน gateway** | **BLOCKED** | gateway ไม่ส่ง PKCE และโฮสต์ redirect ของมันไม่อยู่ใน allowlist ของฮับ — ดูข้อค้นพบ 6 |
-| **Authorization ของ gateway** (ผู้ที่ควรถูกปฏิเสธ) | **NOT RUN** | ต้องมี principal ที่สองบน TrueFoundry ที่ไม่มีสิทธิ์บน connector — ดูข้อค้นพบ 8 |
+| **Authorization ของ gateway** (ผู้ที่ควรถูกปฏิเสธ) | **PASS** | `evidence/gateway-authorization.txt` — ข้อค้นพบ 9 |
+| **การกรอง tool ราย tool บน Virtual MCP** | **FAIL** | manifest เก็บ subset ไว้แต่ไม่ถูกบังคับใช้ — ข้อค้นพบ 10 |
 
 ## Acceptance criteria
 
@@ -21,7 +22,7 @@ TrueFoundry แผน Developer แบบฟรี ทำให้ปิดเ�
 | --- | --- | --- |
 | AC1 topology + version + ขั้นตอนเริ่มระบบที่ทำซ้ำได้ | **PASS** | `dual-mcp-overview.md` §2, `dual-mcp-runbook.md` · เหลือช่องโหว่เดียว: Worker ของ collaboration ปักหมุดเป็น commit จากภายนอกไม่ได้ |
 | AC2 initialize + tools/list + เรียก read อย่างน้อยหนึ่งตัว ทั้งสอง server | **PASS (ทางตรงและผ่าน gateway)** / **PARTIAL (ผ่าน harness)** | ทางตรงและผ่าน gateway: collab 15 tools + IT 24 tools เรียก read จริงได้ทั้งคู่ · ผ่าน TrueForge: discover ได้จำนวนเท่ากัน แต่ "เรียก" tool เป็น **NOT RUN** เพราะ harness ไม่มี API เรียก tool นอก agent turn ซึ่งต้องมี model provider |
-| AC3 ไม่มี/ผิดโทเคนถูกปฏิเสธ · โทเคน IT ถูกปฏิเสธที่ admin และ accounting | **PASS (ทางตรง)** / **PARTIAL (gateway)** | ทางตรง: 401 ทั้งกรณีไม่มีและผิดโทเคนที่ทั้งสอง server, 403 สำหรับโทเคน IT ที่ `/mcp/admin` และ `/mcp/accounting` · gateway: 401 เมื่อไม่มีหรือใช้ PAT ผิดทั้งสอง connector และ connector ที่ชี้โทเคน IT ไปที่ path admin ถูกปฏิเสธ `403 "This token cannot access this MCP path"` — แต่ 403 ก้อนนั้นคือ **RBAC ของ upstream ที่โผล่ผ่าน gateway ออกมา ไม่ใช่ gateway policy** ตัว gateway policy เองคือแถว NOT RUN ข้างบน |
+| AC3 ไม่มี/ผิดโทเคนถูกปฏิเสธ · โทเคน IT ถูกปฏิเสธที่ admin และ accounting | **PASS (ทางตรงและ gateway)** | ทางตรง: 401 ทั้งกรณีไม่มีและผิดโทเคนที่ทั้งสอง server, 403 สำหรับโทเคน IT ที่ `/mcp/admin` และ `/mcp/accounting` · gateway: 401 เมื่อไม่มีหรือใช้ PAT ผิดทั้งสอง connector และ connector ที่ชี้โทเคน IT ไปที่ path admin ถูกปฏิเสธ `403 "This token cannot access this MCP path"` — แต่ 403 ก้อนนั้นคือ RBAC ของ upstream ที่โผล่ผ่าน gateway ออกมา ไม่ใช่ gateway policy · **gateway policy เองพิสูจน์แยกแล้วในข้อค้นพบ 9** จึงนับเป็น PASS ทั้งสองชั้น |
 | AC4 tools/list ของ IT ไม่มี privileged shell | **PASS (ทางตรงและผ่าน gateway)** | 24 tools ไม่มีตัวไหนเข้าข่าย `run_shell`/`exec`/`command` และไม่ได้เรียก shell จริง |
 | AC5 identity บน collaboration ตรงกับตัวตนของทีม | **PASS แต่มีข้อสังเกตที่สำคัญ** | `you_are=monthop-gmail/trueforge` ทั้งเส้นทางตรงและผ่าน gateway และ handoff ถูกรับด้วยชื่อเดียวกัน · เป็น **service/team identity ไม่ใช่ human หรือ model identity** — ดูข้อค้นพบ 1 |
 | AC6 ทดสอบ OAuth ทั้งสอง server พร้อมบันทึก refresh และ restart | **PASS (IT Ops ทางตรง)** / **NOT RUN (collab)** / **BLOCKED (gateway)** | ทางตรง: DCR → PKCE S256 → consent → code → token → tools/list → refresh ผ่านหมด · code ที่ถูกเล่นซ้ำด้วย verifier ผิดถูกปฏิเสธ · พฤติกรรมตอน restart อยู่ในข้อค้นพบ 3 · OAuth ผ่าน gateway ดูข้อค้นพบ 6 |
@@ -135,6 +136,40 @@ production และเป็นการยกเว้น PKCE โดยเจ
 ที่ไม่มีสิทธิ์บน connector เหล่านี้ · แผน Developer แบบฟรีให้ 3 users จึงไม่มีค่าใช้จ่ายใด ๆ
 เหลือแค่การตัดสินใจ
 
+### 9. gateway ปฏิเสธผู้ที่ไม่มีสิทธิ์จริง — ที่ชั้นของมันเอง
+
+principal ที่ใช้คือ virtual account ที่ไม่ผูก role ใด ๆ · PAT ใบที่สองที่ออกจากผู้ใช้คนเดิม
+**ใช้เป็น negative test ไม่ได้** เพราะ PAT สืบสิทธิ์จากผู้ใช้ที่ออกมัน permission จึงเท่ากันทุกบรรทัด
+
+| การทดสอบ | ผล |
+| --- | --- |
+| ไม่มี role binding → connector ทั้งสองและ virtual endpoint | 403 ทั้งสามทาง (owner ได้ 200) |
+| ผูก `mcp-server-user` เฉพาะ connector เดียว | connector นั้น 200 · อีกตัว 403 |
+| ถอน role binding แล้วยิงซ้ำ | 403 ตั้งแต่ครั้งแรก |
+| propagation | ขาให้ ~0 วินาที · ขาถอน ~1 วินาที |
+
+ข้อความที่ปฏิเสธคือของ gateway เอง ระบุทั้งชื่อ principal และชื่อ connector
+(`User <principal> is not authorized to access MCP server: <connector>`) คนละก้อนกับ 403 ของ
+nginx ฝั่งฮับ (`This token cannot access this MCP path`) จึงแยกชั้นที่ปฏิเสธออกจากกันได้จริง
+
+คำศัพท์ที่ใช้ได้จริงบน tenant นี้: `resourceType: mcp-server` และ role ชื่อ `mcp-server-user`
+(ชื่ออื่นที่ลองทั้งหมดตอบ `Role not found`)
+
+### 10. subset ของ tool บน Virtual MCP ไม่ใช่ขอบเขตความปลอดภัย
+
+`servers[].tools` ถูกเก็บลง manifest จริง แต่ endpoint ยังเปิดครบทั้ง 39 tools และเรียก tool ที่
+อยู่นอก subset ได้สำเร็จ (ทดสอบด้วย tool อ่านเท่านั้น) ลองอีกสามรูปแบบของฟิลด์กับ server ตัวเดียว
+ได้ผลเท่ากันหมดคือเห็นครบทั้ง server
+
+สิ่งที่ใช้ได้จริงคือการประกอบ **ราย server** — virtual server ที่ใส่เฉพาะ collab เปิดแค่ 15 tools
+
+ผลต่อแผน: pilot อ่านอย่างเดียวพึ่ง virtual server อย่างเดียวไม่ได้ ต้องมี enforcement ที่ upstream
+และต้องรู้ว่าทั้งสองระบบไม่ได้เป็น read-only โดยธรรมชาติ — collab มี tool เขียนอยู่ใน set เดียวกัน
+ส่วน IT role มี `rag_reindex` / `rag_run_ocr` / `pstack_call_tool` ที่เขียนได้
+
+ยังไม่สรุปว่า TrueFoundry ทำไม่ได้ อาจเป็นชื่อฟิลด์อื่นหรือฟีเจอร์ของแผนที่สูงกว่า ต้องยืนยันก่อน
+วางแผนบนสมมติฐานนี้
+
 ## Go / No-go สำหรับรอบ 3
 
 **Go** สำหรับการใช้งานภายในทีมบนเส้นทางใดก็ได้: ทางตรงสำหรับสิ่งที่รันอยู่ในเครือข่ายออฟฟิศ
@@ -143,7 +178,8 @@ production และเป็นการยกเว้น PKCE โดยเจ
 **No-go** สำหรับอะไรก็ตามที่พึ่งการอนุญาตรายผู้เรียก การเพิกถอนรายตัว หรือความน่าเชื่อถือของ
 authorship ในโต๊ะ จนกว่า:
 
-1. ข้อค้นพบ 8 ถูกปิด — ก่อนหน้านั้น "gateway บังคับสิทธิ์ให้" ยังเป็นข้อสันนิษฐาน
+1. ~~ข้อค้นพบ 8~~ ปิดแล้วด้วยข้อค้นพบ 9 — gateway บังคับสิทธิ์ได้จริง · แต่ข้อค้นพบ 10 เปิด
+   คำถามใหม่แทน: การกรองราย tool ยังไม่มี enforcement
 2. ข้อค้นพบ 1 ถูกตัดสิน — จะผูก identity กับโทเคน หรือประกาศว่า authorship ในโต๊ะเป็นข้อมูลประกอบ
 3. เจ้าของงานตัดสินข้อค้นพบ 6 — เติมโฮสต์ของ gateway ลง allowlist แล้วได้ OAuth จริง
    หรืออยู่กับ credential แบบ header แล้วยอมรับว่าเป็นความลับที่ใช้ร่วมกันต่อ connector
