@@ -1,0 +1,50 @@
+# cloud-chat read-only pilot — รันตามขอบเขตที่อนุมัติใน dec-32f127cf
+# ใช้ deployment ทดสอบและ connector ที่มีอยู่แล้ว ไม่สร้าง resource ใหม่
+# ไม่มี token, hostname จริง หรือ id ในไฟล์นี้
+run-at: 2026-09-17
+
+== ขอบเขตที่รัน ==
+connector poc-collab-readonly -> /mcp-readonly ของ Worker ทดสอบ (header credential ของชุดทดสอบ)
+เรียกผ่าน gateway ด้วย principal ที่มีสิทธิ์ และด้วย principal ที่ไม่มีสิทธิ์เพื่อเทียบ
+
+== 1. initialize + tools/list ==
+6 tools: get_decisions, get_plans, get_tasks, get_handoffs, get_discussion, get_workspace_context
+ไม่มี write tool ปรากฏในรายการ
+
+== 2. read call ==
+get_workspace_context -> OK
+
+== 3. direct tools/call ของ write tool ทั้งเก้า (ชั้น upstream) ==
+post_message        DENIED: Tool post_message disabled
+create_task         DENIED: Tool create_task disabled
+record_decision     DENIED: Tool record_decision disabled
+create_handoff      DENIED: Tool create_handoff disabled
+create_discussion   DENIED: Tool create_discussion disabled
+update_task         DENIED: Tool update_task disabled
+accept_handoff      DENIED: Tool accept_handoff disabled
+record_plan         DENIED: Tool record_plan disabled
+resolve_decision    DENIED: Tool resolve_decision disabled
+# ข้อความระบุชื่อ tool มาจาก MCP server ฝั่ง upstream ไม่ใช่ gateway
+
+== 4. principal ที่ไม่มีสิทธิ์ (ชั้น gateway) ==
+"User <principal> is not authorized to access MCP server: poc-collab-readonly"
+# ข้อความของ gateway เอง ระบุทั้งชื่อ principal และชื่อ connector คนละก้อนกับข้อ 3
+
+== 5. stop conditions — ตรวจครบ ไม่มีข้อใดเกิดขึ้น ==
+write tool ทำงานสำเร็จ            : ไม่เกิด (ถูกปฏิเสธครบเก้าตัว)
+credential ข้ามเส้นทางได้          : ไม่เกิด (พิสูจน์ไว้แล้วใน acceptance 21/21)
+gateway ไม่ปฏิเสธผู้ไม่มีสิทธิ์     : ไม่เกิด (ข้อ 4)
+มีคำขอไปถึง ws-001 หรือข้อมูลไซต์  : ไม่เกิด — connector ชี้ไป host ของ deployment ทดสอบเท่านั้น
+                                     และ workspace ทดสอบยังมี discussions=1 เท่าเดิมหลังจบ pilot
+                                     คือไม่มีอะไรถูกเขียนเพิ่มจากการทดสอบรอบนี้
+
+== สิ่งที่รอบนี้ยังไม่ได้พิสูจน์ ==
+การต่อจากไคลเอนต์แชทบนคลาวด์ของจริง (login/consent ในตัวแอป) ยังไม่ได้ทำ
+เพราะต้องให้เจ้าของงานเพิ่ม connector ในแอปด้วยบัญชีตัวเอง
+สิ่งที่พิสูจน์แล้วคือชั้นโปรโตคอลทั้งหมดที่ไคลเอนต์เหล่านั้นใช้ — 401 พร้อม WWW-Authenticate,
+protected-resource metadata, AS metadata ที่มี DCR และ PKCE S256 และ DCR จริงที่ตอบ 201
+(บันทึกไว้ตั้งแต่ seq 9) รวมถึงเส้นทางทั้งหมดในไฟล์นี้
+
+== ข้อจำกัดที่ต้องระบุคู่กับผลเสมอ ==
+upstream เห็นตัวตนของ credential ที่ใช้ร่วมกัน ไม่ใช่ตัวผู้ใช้รายคน
+การแยกรายคนมีหลักฐานอยู่ที่ gateway เท่านั้นใน pilot นี้
