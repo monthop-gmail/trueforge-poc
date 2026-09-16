@@ -6,8 +6,10 @@ run-at: 2026-09-17T02:06:16+07:00
 route แยก /mcp/it-readonly/ -> hub instance ที่ตั้ง HUB_READ_ONLY=true
 deny-by-default ที่จุดลงทะเบียน tool (Proxy ครอบ server.tool) ครอบทุก backend พร้อมกัน
 credential แยก: VIEWER_TOKEN -> role viewer ซึ่ง mcp-auth อนุญาตเฉพาะ path readonly
-tool ที่ถูกปฏิเสธยังถูกลงทะเบียนไว้ แต่ handler ตอบปฏิเสธ และ schema ถูกแทนด้วย {}
-เพื่อให้คำตอบเป็น 'ไม่อนุญาต' เสมอ ไม่ใช่ 'อาร์กิวเมนต์ผิด' เมื่อขาดฟิลด์
+tool ที่ถูกปฏิเสธถูกลงทะเบียนแล้ว disable() ทันที ได้ทั้งสองชั้นพร้อมกัน
+   ชั้น discovery: SDK กรอง tool ที่ disabled ออกจาก tools/list
+   ชั้น enforcement: เรียกตรง ๆ ได้ isError พร้อมข้อความ "Tool <name> disabled"
+   ซึ่งระบุชื่อ tool ไม่ใช่ unknown tool
 
 == 1. tools/call ไป write tools ตรง ๆ พร้อม arguments ที่ถูกต้อง ==
 rag_reindex              DENIED (upstream enforcement)
@@ -15,14 +17,15 @@ rag_run_ocr              DENIED (upstream enforcement)
 rag_submit_ocr           DENIED (upstream enforcement)
 rag_review_ocr_job       DENIED (upstream enforcement)
 pstack_call_tool         DENIED (upstream enforcement)
-# ข้อความที่ได้: read-only route: tool "<name>" ไม่ได้รับอนุญาตบนเส้นทางนี้
-# เป็น error ของ hub เอง ไม่ใช่ของ gateway และไม่ใช่ 'unknown tool'
+# ข้อความที่ได้: MCP error -32602: Tool <name> disabled
+# เป็น error ของ MCP server ฝั่ง hub เอง ไม่ใช่ของ gateway และระบุชื่อ tool
+# ไม่ใช่ unknown tool ที่แยกไม่ออกจากการพิมพ์ผิด
 
 == 2. read tools ยังทำงาน ==
 rag_get_status           OK
 zktime_get_status        OK
 rag_search               OK
-initialize + tools/list  OK (24 tools ลงทะเบียนครบ 19 เรียกได้ 5 ปฏิเสธ)
+initialize + tools/list  OK (19 tools — 5 ตัวที่ถูกปฏิเสธถูกซ่อนจากรายการ)
 
 == 3. ยกระดับสิทธิ์ไม่ได้ ==
 viewer -> /mcp/it                              403
@@ -44,3 +47,14 @@ restart mcp-hub-it-readonly แล้วเรียกซ้ำ: rag_reindex DE
 scripts/smoke-test.sh : 26 passed / 4 failed
 # ทั้งสี่ที่ตกคือ ACCOUNTING -> 502 จาก sandbox ที่ตั้งใจไม่ยก mcp-hub-accounting ขึ้น
 # เท่าเดิมกับก่อนเปลี่ยน ไม่ถอยหลัง และไม่รายงานว่าผ่านครบ
+
+== 7. รอบแก้ตาม seq 18/20 — ซ่อนจาก tools/list โดยไม่ลด enforcement ==
+tools/list บนเส้น read-only : 19 tools (จาก 24) ไม่มี write tool โผล่เลย
+เรียก write tool ตรง ๆ ทั้งห้าตัว : DENIED ทุกตัว ระบุชื่อ tool ในข้อความ
+read tools : ยังทำงาน
+smoke-test หลังเปลี่ยน : 26 passed / 4 failed เท่าเดิม ไม่ถอยหลัง
+audit ฝั่ง server : บันทึกนโยบายของเส้นทางตอน boot
+  {"msg":"read-only route policy","role":"it","allowed":19,
+   "note":"tools outside this list are registered then disabled: ..."}
+ข้อจำกัด: การบันทึก "ใครเรียก tool ที่ถูกปฏิเสธเมื่อไร" รายครั้ง ต้องมี hook ที่ชั้น HTTP
+ซึ่งอยู่ใน mcp-common ที่ทุกบริการใช้ร่วมกัน จึงไม่แตะในรอบนี้ และเสนอแยกถ้าทีมต้องการ

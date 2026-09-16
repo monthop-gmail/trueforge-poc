@@ -294,7 +294,7 @@ index 84a9d45..edba673 100644
    },
    "engines": {
 diff --git a/packages/mcp-hub/src/index.ts b/packages/mcp-hub/src/index.ts
-index 141397a..2d1ab2a 100644
+index 141397a..eeb2d43 100644
 --- a/packages/mcp-hub/src/index.ts
 +++ b/packages/mcp-hub/src/index.ts
 @@ -2,6 +2,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -334,7 +334,7 @@ index 141397a..2d1ab2a 100644
    return server;
  }
  
-@@ -80,6 +99,7 @@ log("info", "starting MCP hub", {
+@@ -80,13 +99,22 @@ log("info", "starting MCP hub", {
    pstack: optionalEnv("PSTACK_MCP_URL"),
    accountingProduct,
    odooAllowWrite,
@@ -342,7 +342,17 @@ index 141397a..2d1ab2a 100644
    rag: optionalEnv("RAG_MCP_URL"),
    publicBasePath: optionalEnv("MCP_PUBLIC_BASE_PATH"),
  });
-@@ -89,4 +109,4 @@ serveMcpHttp(createServer, {
+ 
++if (readOnly) {
++  log("info", "read-only route policy", {
++    role,
++    allowed: readOnlyTools.length,
++    note: "tools outside this list are registered then disabled: hidden from tools/list and refused by name on tools/call",
++  });
++}
++
+ serveMcpHttp(createServer, {
+   name,
    version: VERSION,
    port,
    publicBasePath: optionalEnv("MCP_PUBLIC_BASE_PATH"),

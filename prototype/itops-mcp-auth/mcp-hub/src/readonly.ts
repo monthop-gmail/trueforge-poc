@@ -55,10 +55,15 @@ export const ACCOUNTING_READ_ONLY_TOOLS: readonly string[] = [
   "rag_get_ocr_page",
 ];
 
-const REFUSAL_PREFIX = "read-only route:";
-
 /**
  * Wraps the server so every `tool()` registration passes through an allowlist.
+ *
+ * A denied tool is registered and then disabled, which buys two things at once:
+ * the SDK filters disabled tools out of `tools/list`, so an agent is not tempted
+ * to call something it cannot use, and a direct `tools/call` still answers
+ * `Tool <name> disabled` — a refusal that names the tool, not the `unknown tool`
+ * you would get by never registering it.
+ *
  * A Proxy keeps this to one place instead of threading a flag through all 52
  * registration sites, and it cannot be bypassed by adding a tool later — a new
  * tool is denied until someone puts it on the list.
@@ -71,30 +76,14 @@ export function withReadOnlyGuard(server: McpServer, allow: readonly string[]): 
       if (prop !== "tool" || typeof value !== "function") {
         return typeof value === "function" ? value.bind(target) : value;
       }
-      return (name: string, description: string, ...rest: unknown[]) => {
-        if (allowed.has(name)) {
-          return (value as (...a: unknown[]) => unknown).call(target, name, description, ...rest);
-        }
-        // The denied tool is registered with an empty schema on purpose: the SDK
-        // validates arguments before the handler runs, so keeping the real schema
-        // would answer "invalid arguments" instead of "not allowed here" whenever
-        // a required field is missing. An empty schema makes the refusal the only
-        // possible answer, whatever the caller sends.
-        return (value as (...a: unknown[]) => unknown).call(
+      return (name: string, ...rest: unknown[]) => {
+        const registered = (value as (...a: unknown[]) => { disable?: () => void }).call(
           target,
           name,
-          `${description} [ปิดใช้งานบนเส้นทางอ่านอย่างเดียว]`,
-          {},
-          async () => ({
-            isError: true,
-            content: [
-              {
-                type: "text" as const,
-                text: `${REFUSAL_PREFIX} tool "${name}" ไม่ได้รับอนุญาตบนเส้นทางนี้`,
-              },
-            ],
-          }),
+          ...rest,
         );
+        if (!allowed.has(name)) registered?.disable?.();
+        return registered;
       };
     },
   });
