@@ -1,0 +1,48 @@
+# ทางเลือกสำหรับให้ upstream ได้โทเคนที่ผูกกับปลายทาง — พิสูจน์ด้วยการยิงจริง
+# ตาม dis-bc779b20 seq 31 ข้อ 2 · ไม่มีโทเคนหรือความลับในไฟล์นี้
+run-at: 2026-09-17
+
+โจทย์จาก seq 30: passthrough ส่งโทเคนของผู้เรียกไปให้ upstream ตามเดิม แต่ aud ของโทเคน
+ชี้ไปที่ tenant ของ gateway ไม่ใช่ทรัพยากรของ upstream จึงใช้เป็น audience binding ไม่ได้
+คำถามคือ gateway มีทางอื่นที่ทำให้ upstream ได้โทเคนที่มี aud ของตัวเองหรือไม่
+
+== ทางเลือก ก — RFC 8693 token exchange : ไม่รองรับ ==
+metadata ของ AS ประกาศ grant_types_supported ว่า
+  authorization_code, password, implicit, refresh_token, device_code
+ไม่มี urn:ietf:params:oauth:grant-type:token-exchange
+
+ไม่หยุดที่ metadata — ยิงจริงไปที่ token endpoint ด้วย grant_type=token-exchange
+พร้อม subject_token, subject_token_type และ resource ที่ชี้ไป upstream
+ได้กลับมา:
+  422 · "grant_type must be one of the following values: authorization_code, refresh_token"
+
+ข้อสังเกตที่มีค่าเกินคำถามนี้: token endpoint รับจริงแค่สอง grant ทั้งที่ metadata
+ประกาศไว้ห้า — เป็นอีกกรณีที่ metadata กับพฤติกรรมจริงไม่ตรงกัน จึงต้องยิงเสมอ
+
+== ทางเลือก ข — ให้ upstream เป็นผู้ออกโทเคน (gateway ใช้ outbound OAuth) : ติด PKCE ==
+OAuth ของ deployment ทดสอบฝั่ง collab ประกาศ
+  grant_types: authorization_code, refresh_token
+  code_challenge_methods: S256
+  token_endpoint_auth_methods: client_secret_basic, client_secret_post, none
+
+ทดสอบว่าบังคับ PKCE จริงหรือไม่ โดย DCR หนึ่ง client แล้วเรียก /authorize
+  ไม่ส่ง code_challenge      -> 400
+  ส่ง code_challenge (S256)  -> 200
+
+และ seq 13 พิสูจน์ไว้แล้วว่า gateway ไม่ส่ง code_challenge ในขา outbound
+ทางนี้จึงตันด้วยเหตุผลเดียวกับที่ฮับ itops เคยตัน ไม่ใช่เรื่องเฉพาะของฮับ
+
+== สรุป ==
+วันนี้ gateway ทำได้สามอย่าง และไม่มีอันไหนให้ทั้งตัวตนรายคนและ audience ที่ถูกต้องพร้อมกัน
+  1. header credential ที่ใช้ร่วมกัน  -> upstream เห็นตัวตนเดียว แต่ทำงานได้จริง
+  2. passthrough                      -> ตัวตนรายคนตรวจได้ แต่ aud ไม่ใช่ของ upstream
+  3. outbound OAuth                   -> ถูกต้องตามหลัก แต่ไม่ส่ง PKCE จึงต่อกับ upstream ทั้งสองตัวไม่ได้
+
+ทางออกที่เหลือจึงไม่ได้อยู่ในมือของทีมนี้ทั้งหมด
+  ก. ขอให้ผู้ให้บริการ gateway รองรับ PKCE ในขา outbound
+  ข. ขอให้ผู้ให้บริการ gateway รองรับ token exchange
+  ค. ให้ upstream ยอมรับ client ที่ไม่ทำ PKCE เฉพาะโฮสต์ของ gateway ซึ่งเป็นการผ่อนมาตรการ
+     ที่ทีมสั่งพักไว้แล้ว และไม่ได้แก้เรื่อง audience อยู่ดี
+
+ข้อ ก และ ข เป็นคำขอไปที่ผู้ให้บริการ ไม่ใช่การแก้โค้ดฝั่งเรา
+ระหว่างนี้เส้นทางที่ใช้งานได้คือ shared credential ต่อหนึ่งเส้นทาง ตามที่ pilot เสนอไว้
