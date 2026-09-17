@@ -1,0 +1,68 @@
+# สำรวจ Smithery เทียบกับ TrueFoundry gateway — ทดสอบด้วยชุดคำถามที่ PoC ของเราเจอทางตัน
+# ทดสอบบน deployment ทดสอบและ sandbox ในเครื่องเท่านั้น ไม่มี key หรือ hostname จริงในไฟล์นี้
+run-at: 2026-09-17
+
+Smithery = registry ของ MCP server (โฆษณา 21,784+ ตัว) + gateway ที่จัดการ auth ให้
+หมายเหตุ: ประกาศบนเว็บว่าเป็นส่วนหนึ่งของ Arcade.dev แล้ว
+
+== 1. ต่อ MCP server ของเราเองที่ URL ส่วนตัวได้ไหม — ได้ ==
+POST https://api.smithery.ai/connect/<namespace>
+body: transport=http, mcpUrl=<URL ของเรา>, headers={Authorization: Bearer <RO token>}, metadata={...}
+ผล: 201 · status.state = connected · serverInfo กลับมาถูกต้อง
+header ถูกเก็บแบบไม่คืนกลับมาใน response เหมือนฝั่ง TrueFoundry
+
+== 2. read-only enforcement ของ upstream ยังทำงานผ่าน gateway — ใช่ ==
+tools/list ผ่าน Smithery : 6 tools อ่านล้วน ตรงกับที่ upstream เปิด
+เรียก read tool            : 200 ได้ข้อมูลจริง
+เรียก write tool ตรง ๆ     : {"error":"tool_error","message":"Tool post_message disabled","code":-32602}
+                             HTTP 422
+
+ข้อแตกต่างที่มีผลกับการเฝ้าระวัง: Smithery คืน **HTTP 422 พร้อม error envelope**
+ส่วน TrueFoundry คืน HTTP 200 แล้วซ่อน isError ไว้ใน body ซึ่งเป็นเหตุผลที่ telemetry ของเรา
+ต้องดูชื่อ tool แทน status · ฝั่ง Smithery ดูจาก status ได้ตรง ๆ
+
+== 3. authorization ราย principal — ทำได้ และละเอียดกว่าที่ TrueFoundry ทำได้ ==
+mint โทเคนจำกัดสิทธิ์ด้วย policy: resources=connections, operations=[read,execute],
+namespaces=<ns>, metadata={poc:"true"}, ttl=1h  (เพดาน 24 ชม.)
+
+ผลการทดสอบด้วยโทเคนนั้น
+  list connections              เห็นเฉพาะใบที่ metadata ตรง (อีกใบไม่โผล่เลย)
+  execute บน connection ที่ตรง   200
+  execute บน connection ที่ไม่ตรง 404   <- ไม่บอกด้วยซ้ำว่ามีอยู่
+  create connection (write)      403
+  delete connection (write)      403
+
+เทียบกับ TrueFoundry: ที่นั่นผูกสิทธิ์ราย connector ได้ (role mcp-server-user) แต่ไม่มี
+การจำกัดชนิดปฏิบัติการ ไม่มี metadata filter และไม่มีอายุโทเคน
+
+== 4. uplink — ยังทดสอบไม่ได้ ติดที่การล็อกอิน ==
+เอกสารระบุว่า uplink เปิดให้ MCP server ที่รันในเครื่องใด ๆ กลายเป็น connection ของ Smithery
+ผ่าน WebSocket ที่ CLI เป็นฝ่ายเปิดออกไป (outbound-only) ไม่ต้องเปิดทางเข้าจากภายนอก
+ถ้าใช้ได้จริง นี่คือสิ่งที่ TrueFoundry ทำไม่ได้ และเป็นเหตุผลเดียวที่ Gateway -> Hub
+ของเรายังเป็น BLOCKED
+
+แต่คำสั่งฝั่ง connection ของ CLI (mcp add, mcp list) ตอบ "404 Server not found" ทุกครั้ง
+เมื่อใช้ API key อย่างเดียว ขณะที่ REST API ตัวเดียวกันทำงานปกติ — เดาว่า CLI ต้องการ
+session จาก `smithery auth login` ซึ่งต้องกดในเบราว์เซอร์
+ข้อจำกัดเพิ่มเติมที่เจอ: uplink ไม่รองรับ --headers จึงต้องมี shim ท้องถิ่นเติม credential ให้
+ถ้าเส้นทางปลายทางบังคับ Bearer (ทดสอบ shim แล้วใช้ได้ 200 แต่ยังต่อ uplink ไม่ได้)
+
+== สรุปเทียบสองเจ้า ตามคำถามที่ PoC เราเจอทางตัน ==
+                                   TrueFoundry        Smithery
+ต่อ MCP server ของเราเอง             ได้                ได้
+read-only enforcement ของ upstream   ผ่าน               ผ่าน
+รูปแบบ error ตอนถูกปฏิเสธ            200 + isError      422 + error envelope
+authorization ราย principal          ได้ (ราย connector) ได้ + จำกัดปฏิบัติการ + metadata + TTL
+tool-level policy ที่บังคับใช้จริง    ไม่มี              ยังไม่ได้ทดสอบ (มี operations แต่ไม่ใช่ราย tool)
+เข้าถึง server ใน LAN โดยไม่เปิด ingress  ทำไม่ได้        มี uplink แต่ยังทดสอบไม่ได้
+outbound OAuth ส่ง PKCE              ไม่ส่ง             ยังไม่ได้ทดสอบ
+token exchange / resource-bound      ไม่มี              ยังไม่ได้ทดสอบ
+
+== ที่ยังไม่ได้ทดสอบ และต้องทำก่อนสรุปว่าดีกว่าจริง ==
+uplink ของจริง (ต้องล็อกอินด้วยเบราว์เซอร์) · outbound OAuth ว่าส่ง PKCE ไหม ·
+มี resource-bound token หรือ token exchange ไหม · ราคาและโควตา ·
+ผลของการที่ Smithery ไปอยู่ใต้ Arcade.dev
+
+== ของที่สร้างไว้บนบัญชี Smithery ==
+namespace: <ของผู้ใช้> · connection เหลือหนึ่งใบคือใบที่ชี้ไป /mcp-readonly ของ deployment ทดสอบ
+connection ที่ใช้ทดสอบ metadata filter ถูกลบแล้ว · โทเคนจำกัดสิทธิ์ที่ mint ไว้หมดอายุเองใน 1 ชม.
