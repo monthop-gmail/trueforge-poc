@@ -35,17 +35,37 @@ namespaces=<ns>, metadata={poc:"true"}, ttl=1h  (เพดาน 24 ชม.)
 เทียบกับ TrueFoundry: ที่นั่นผูกสิทธิ์ราย connector ได้ (role mcp-server-user) แต่ไม่มี
 การจำกัดชนิดปฏิบัติการ ไม่มี metadata filter และไม่มีอายุโทเคน
 
-== 4. uplink — ยังทดสอบไม่ได้ ติดที่การล็อกอิน ==
+== 4. uplink — ต่อไม่ได้ และไม่ใช่เพราะการล็อกอิน ==
 เอกสารระบุว่า uplink เปิดให้ MCP server ที่รันในเครื่องใด ๆ กลายเป็น connection ของ Smithery
 ผ่าน WebSocket ที่ CLI เป็นฝ่ายเปิดออกไป (outbound-only) ไม่ต้องเปิดทางเข้าจากภายนอก
 ถ้าใช้ได้จริง นี่คือสิ่งที่ TrueFoundry ทำไม่ได้ และเป็นเหตุผลเดียวที่ Gateway -> Hub
 ของเรายังเป็น BLOCKED
 
-แต่คำสั่งฝั่ง connection ของ CLI (mcp add, mcp list) ตอบ "404 Server not found" ทุกครั้ง
-เมื่อใช้ API key อย่างเดียว ขณะที่ REST API ตัวเดียวกันทำงานปกติ — เดาว่า CLI ต้องการ
-session จาก `smithery auth login` ซึ่งต้องกดในเบราว์เซอร์
-ข้อจำกัดเพิ่มเติมที่เจอ: uplink ไม่รองรับ --headers จึงต้องมี shim ท้องถิ่นเติม credential ให้
-ถ้าเส้นทางปลายทางบังคับ Bearer (ทดสอบ shim แล้วใช้ได้ 200 แต่ยังต่อ uplink ไม่ได้)
+เจ้าของงานล็อกอินผ่านเบราว์เซอร์แล้วสำเร็จ (CLI รายงาน organization และ namespace ถูกต้อง)
+แต่คำสั่งฝั่ง connection ของ CLI ยังตอบ "404 Server not found" ทุกคำสั่ง
+
+ที่ลองแล้วทั้งหมด ได้ 404 เหมือนกันหมด
+  mcp list / mcp get / mcp add            ก่อนล็อกอินและหลังล็อกอิน
+  ทั้ง API key แบบ uuid และโทเคน smry_ ที่ได้จากการล็อกอิน
+  ทั้งแพ็กเกจ @smithery/cli 4.11.1 และแพ็กเกจ smithery 1.2.0
+  ระบุ --namespace ตรง ๆ ก็ยัง 404
+  ตั้ง SMITHERY_API_URL / SMITHERY_API_BASE_URL ก็ไม่เปลี่ยน
+
+ขณะที่ REST API ตัวเดียวกันทำงานปกติทุกอย่างด้วยโทเคนทั้งสองใบ
+  GET/POST/DELETE /connect/<namespace>    200/201/200
+  /connect (ไม่มี namespace)              404   <- เดาว่า CLI เรียกเส้นนี้
+  /connect/<organization id>              404
+
+และ REST API รับ transport ได้สองค่าคือ "http" กับ "uplink" — สร้าง connection แบบ uplink
+ผ่าน REST ได้จริง (201, state=disconnected รอฝั่งเอเจนต์มาต่อ) แต่ฝั่งที่ต้องเปิด WebSocket
+คือ CLI ซึ่งใช้ไม่ได้ จึงต่อไม่สำเร็จ ลบ connection นั้นทิ้งแล้ว
+
+ข้อจำกัดเพิ่มเติมที่เจอระหว่างทาง: uplink ไม่รองรับ --headers จึงต้องมี shim ท้องถิ่นเติม
+credential ให้ ถ้าปลายทางบังคับ Bearer · เขียน shim ไว้แล้วและทดสอบว่าส่งถึงเส้น read-only
+ของฮับได้จริง (200) พร้อมใช้ทันทีถ้า CLI กลับมาใช้ได้
+
+สรุปข้อนี้: **BLOCKED ที่เครื่องมือของผู้ให้บริการ ไม่ใช่ที่การตั้งค่าของเรา**
+เป็นอาการที่ควรแจ้งผู้ให้บริการพร้อมกับที่แจ้ง TrueFoundry
 
 == สรุปเทียบสองเจ้า ตามคำถามที่ PoC เราเจอทางตัน ==
                                    TrueFoundry        Smithery
@@ -54,7 +74,7 @@ read-only enforcement ของ upstream   ผ่าน               ผ่า�
 รูปแบบ error ตอนถูกปฏิเสธ            200 + isError      422 + error envelope
 authorization ราย principal          ได้ (ราย connector) ได้ + จำกัดปฏิบัติการ + metadata + TTL
 tool-level policy ที่บังคับใช้จริง    ไม่มี              ยังไม่ได้ทดสอบ (มี operations แต่ไม่ใช่ราย tool)
-เข้าถึง server ใน LAN โดยไม่เปิด ingress  ทำไม่ได้        มี uplink แต่ยังทดสอบไม่ได้
+เข้าถึง server ใน LAN โดยไม่เปิด ingress  ทำไม่ได้        มี uplink แต่ CLI ใช้ไม่ได้ (404)
 outbound OAuth ส่ง PKCE              ไม่ส่ง             ยังไม่ได้ทดสอบ
 token exchange / resource-bound      ไม่มี              ยังไม่ได้ทดสอบ
 
