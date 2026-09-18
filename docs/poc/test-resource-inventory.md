@@ -44,9 +44,10 @@ wrangler delete --name ai-collaboration-mcp-poc
 wrangler d1 delete ai-collab-poc
 wrangler kv namespace delete --namespace-id <id ของ KV ทดสอบ>
 
-# TrueFoundry — ลบ connector และ virtual account ที่ใช้ทดสอบ
-#   DELETE /api/svc/v1/mcp/<id ของ poc-collab-readonly>
-#   ลบ virtual account poc-noaccess ถ้าไม่ใช้ต่อ
+# TrueFoundry — ต้องทำผ่านหน้าเว็บแล้ว เพราะ PAT ถูกเพิกถอนไปเมื่อ 18 ก.ย. 2026
+#   ลบ connector poc-collab-readonly
+#   ลบ virtual account poc-noaccess (ยัง authenticate ได้แต่ไม่มีสิทธิ์อะไรเลย)
+#   ถ้าจะกลับมาใช้ API ต้องออก PAT ใบใหม่ก่อน
 
 # ในเครื่อง
 docker compose -p itops-poc down -v
@@ -55,7 +56,29 @@ rm -f .env.tfy vendor/itops-mcp-hub/.env <clone ของ collab>/.dev.vars
 ```
 
 secret ของชุดทดสอบเป็นคนละใบกับของจริงตั้งแต่ต้น · การลบจึงไม่ต้องเพิกถอนอะไรฝั่ง production
-สิ่งเดียวที่ต้องเพิกถอนแยกคือ **PAT ของ TrueFoundry** ที่ใช้ทำ PoC ทั้งรอบ
+
+## 4.1 PAT ของ TrueFoundry — **เพิกถอนแล้ว 18 ก.ย. 2026**
+
+| ใบ | id | ผล |
+|---|---|---|
+| `poc-trueforge` | `nl5i4kdk…` | ลบแล้ว |
+| `poc-trueforge-noaccess` | `bpapovo2…` | ลบแล้ว |
+| `default-jl9t3n2n…` | — | **ไม่แตะ** — ใบที่ระบบสร้างตอนสมัคร ไม่ใช่ของงานนี้ |
+
+ยืนยันด้วยการยิงจริง ไม่ใช่แค่หายจากรายการ — เรียก `GET /v1/personal-access-tokens`
+ด้วยโทเคนเดิมแล้วได้ **401 `Invalid or expired token`**
+
+**ผลที่ตามมาและต้องรู้:** resource ทดสอบบน TrueFoundry ที่ยังคงไว้
+(connector `poc-collab-readonly`, virtual account `poc-noaccess`)
+**จัดการผ่าน API ไม่ได้อีกแล้ว** ต้องเข้าหน้าเว็บ หรือออก PAT ใบใหม่
+
+`TFY_VA_NOACCESS` เป็น virtual account คนละชนิดกับ PAT · ยัง authenticate ได้
+(ตอบ 403 ไม่ใช่ 401) แต่ไม่มี role binding ใด ๆ จึงทำอะไรไม่ได้เลย
+ซึ่งเป็นสภาพที่ตั้งใจไว้ตั้งแต่แรก — ถ้าจะลบต้องทำผ่านหน้าเว็บ
+
+**`RYNST_IT_TOKEN` ไม่ถูกแตะ** — ตรวจแล้วยังใช้งานได้จริง (200)
+เป็นโทเคนของไซต์ ไม่ใช่ของ PoC และไม่ใช่สิทธิ์เราที่จะเพิกถอน
+ถ้าไซต์ไม่ต้องการให้เครื่องนี้ถือต่อ ให้เจ้าของไซต์หมุนโทเคนฝั่งเขา
 
 ## 5. ข้อห้ามระหว่างที่ยังคงของไว้
 
